@@ -13,6 +13,13 @@ library(RColorBrewer)
 library(tm)
 library(httr) #for reading from github
 
+
+#***************
+# NOTES/TO DO
+# 1. modify "data" scenario so data can be shown behind the model data (use opacity command)-maybe add a new column for this to seperate this 
+# 2. add confidence interval data for future predictions
+# 3. clean up scenario and data stacking
+
 #prevent shiny from overwriting our error message
 #not used right now, using safeError below instead
 #options(shiny.sanitize.errors = FALSE)
@@ -68,7 +75,9 @@ get_data <- function()
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
      
    
-  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv")
+  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") %>%
+    #fix NAs on "data" scenario by recoding mean to median
+    mutate(median_value = ifelse(sim_type == "data", mean_value, median_value))
   
   us_dat <- us_dat_raw %>% select(location,date,variable,sim_type,median_value) %>%
                            left_join(us_popsize, by = "location") %>%
@@ -124,10 +133,10 @@ ui <- fluidPage(
               tabPanel(title = "US States", value = "us",
                        sidebarLayout(
                          sidebarPanel(
-                           shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("Georgia","California","Washington") ),
+                           shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE,options = list(`actions-box` = TRUE), selected = c("Georgia") ),
                            shiny::div("US is at start of state list."),
                            br(),
-                           shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") ),
+                           shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("data", "status_quo") ),
                            shiny::div("Choose potential future scenarios (see 'About' tab for details)."),
                            br(),
                            shiny::selectInput( "case_death",   "Outcome",c("Cases" = "Cases", "Hospitalizations" = "Hospitalized", "Deaths" = "Deaths")),
@@ -323,20 +332,6 @@ server <- function(input, output, session) {
       outcome = paste(daily_tot,outtype,sep="_") 
     }
 
-    
-   # if (current_tab == "county")
-  #  {
-      #add an additional line of filtering when using the county tab to prevent double stacking of data from counties that share the same name in multiple states
-      #sort remaining data as done for us and world plots
-    #  plot_dat <- county_dat %>% filter(state %in% input$state_selector_c) %>%
-    #                              filter(location %in% location_selector) %>%      
-    #                               filter(scenario %in% scenario_selector) %>%
-    #                               group_by(scenario,location) %>%
-    #                               arrange(date) %>%
-    #                               ungroup()
-   # }
-    #else
-    #{
       #filter data based on user selections
       #keep all outcomes/variables for now so we can do x-axis adjustment
       #filtering of only the outcome to plot is done after x-scale adjustment
@@ -345,9 +340,7 @@ server <- function(input, output, session) {
                                      group_by(scenario,location) %>%
                                      arrange(date) %>%
                                      ungroup()
-   # }
 
-    
     #adjust x-axis as needed 
     if (xscale == 'x_count')
     {
@@ -374,8 +367,6 @@ server <- function(input, output, session) {
                   filter(variable %in% outcome) %>%
                   filter(date >= x_limit) 
     }
-    
-     
     
     
     #set labels and tool tips based on input - entries 2 and 3 are ignored for world plot
@@ -426,11 +417,13 @@ server <- function(input, output, session) {
                                  mode = 'lines+markers', 
                                  linetype = ~scenario, symbol = ~location,
                                  line = list(width = linesize), text = tooltip_text, 
-                                 color = ~location, colors = brewer.pal(ncols, "Dark2")) %>%
+                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3)) %>% 
-      plotly::add_bars(x = ~time, y = ~value,
-                       opacity = 0.25)
+      #adds a verical line at the current date
+      plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                           y = 0, yend = ~max(value)+100, name = "Current Date",
+                           color = I("black"), alpha = 0.5)
 
     # if requested by user, apply and show a smoothing function 
     if (show_smoother == "Yes")
