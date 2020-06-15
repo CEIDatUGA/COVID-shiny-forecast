@@ -79,7 +79,7 @@ get_data <- function()
     #fix NAs on "data" scenario by recoding mean to median
     mutate(median_value = ifelse(sim_type == "data", mean_value, median_value))
   
-  us_dat <- us_dat_raw %>% select(location,date,variable,sim_type,median_value) %>%
+  us_dat <- us_dat_raw %>% select(location,date,variable,sim_type,median_value,lower_95,upper_95) %>%
                            left_join(us_popsize, by = "location") %>%
                            rename(populationsize = pop_size, value = median_value, scenario = sim_type) %>%
                            mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
@@ -141,6 +141,9 @@ ui <- fluidPage(
                            br(),
                            shiny::selectInput( "case_death",   "Outcome",c("Cases" = "Cases", "Hospitalizations" = "Hospitalized", "Deaths" = "Deaths")),
                            shiny::div("Modify the top plot to display cases, hospitalizations, or deaths."),
+                           br(),
+                           shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "No"),
+                           shiny::div("Show 95% confidence interval for forecast data."),
                            br(),
                            shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Total" = "Total" )),
                            shiny::div("Modify all three plots to show daily or cumulative data."),
@@ -317,7 +320,7 @@ server <- function(input, output, session) {
   ###########################################
   make_plotly <- function(all_plot_dat, location_selector, scenario_selector,case_death, daily_tot,
                               xscale, yscale, absolute_scaled, x_limit, current_tab,  
-                              show_smoother, ylabel, outtype)
+                              show_smoother, conf_int, ylabel, outtype)
   {
 
     #outcome to plot/process for non-test
@@ -419,12 +422,22 @@ server <- function(input, output, session) {
                                  line = list(width = linesize), text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
-                          layout(legend = list(orientation = "h", x = 0.2, y = -0.3)) %>% 
+                          layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+    
+    if(conf_int == "Yes"){
+      #add confidence interval ranges
+      pl <- pl %>% add_ribbons(x = ~time, ymin = ~lower_95, ymax = ~upper_95) %>%
+        plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                             y = 0, yend = ~max(upper_95)+100, name = "Current Date",
+                             color = I("black"), alpha = 1)
+    }
+    else
+    {
       #adds a verical line at the current date
-      plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                            y = 0, yend = ~max(value)+100, name = "Current Date",
                            color = I("black"), alpha = 0.5)
-
+    }
     # if requested by user, apply and show a smoothing function 
     if (show_smoother == "Yes")
     #if (outname == "outcome" && show_smoother == "Yes")
@@ -461,7 +474,7 @@ server <- function(input, output, session) {
     #create plot
     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$case_death, input$daily_tot,
                               input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$current_tab,
-                              input$show_smoother, ylabel = 1, outtype = '')
+                              input$show_smoother, input$conf_int, ylabel = 1, outtype = '')
     }
     return(pl)
   }) #end function making case/deaths plot
