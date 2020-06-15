@@ -76,15 +76,22 @@ get_data <- function()
      
   us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") 
 
+  #Notes on current data format:
+  #sim_type contains 3 different future scenarios, also includes data
+  #period is Past or Future, based on date up to which data is fit. Only applies to model results
+  #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
+  
+  #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
+  
+  
   us_dat <- us_dat_raw %>% left_join(us_popsize, by = "location") %>%
-                           rename(populationsize = pop_size, value = median_value, scenario = sim_type) %>%
+                           rename(populationsize = pop_size, scenario = sim_type) %>%
                            mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
                                                      daily_hosps = "Daily_Hospitalized", 
                                                      daily_deaths = "Daily_Deaths",
                                                      cumulative_cases = "Total_Cases", 
                                                      cumulative_hosps = "Total_Hospitalized", 
-                                                     cumulative_deaths = "Total_Deaths")) %>%
-                          mutate(transstrength = mobility_trend * latent_trend) 
+                                                     cumulative_deaths = "Total_Deaths")) 
                           
     
     
