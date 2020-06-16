@@ -82,7 +82,7 @@ get_data <- function()
   #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
   
   #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
-  
+  # **** PRIORITY ONE-work on data restructuring as described above (plots will not function again until restructured)****
   
   us_dat <- us_dat_raw %>% left_join(us_popsize, by = "location") %>%
                            rename(populationsize = pop_size, scenario = sim_type) %>%
@@ -150,9 +150,9 @@ ui <- fluidPage(
                            shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Total" = "Total" )),
                            shiny::div("Modify all plots to show daily or cumulative data."),
                            br(),
-                           shiny::selectInput("show_smoother", "Add trend line", c("No" = "No", "Yes" = "Yes")),
-                           shiny::div("Shows a trend line for cases/hospitalizations/deaths plot."),
-                           br(),
+ #Test dropping smoother #  shiny::selectInput("show_smoother", "Add trend line", c("No" = "No", "Yes" = "Yes")),
+                         #  shiny::div("Shows a trend line for cases/hospitalizations/deaths plot."),
+                         #  br(),
                            shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
                            shiny::div("Modify the top two plots to display total counts or values scaled by the state/territory population size."),
                            br(),
@@ -337,7 +337,6 @@ server <- function(input, output, session) {
                          paste0(tool_tip[1], ": ", p_dat$date), 
                          paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n")) 
     
-    ######FUTURE NOTE: right now plotly is plotting only the median values for "daily/total cases/deaths/hosp" may be better to change to max/mean values to match CEID's current patterm
     # make plot
     pl <- plotly::plot_ly(p_dat) %>% 
           plotly::add_trace(x = ~time, y = ~value, type = 'scatter', 
@@ -347,13 +346,14 @@ server <- function(input, output, session) {
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
-    
+
+    #need to eliminate NAs in value and upper_95 to fix issues with Current Date bar bugs
     if(conf_int == "Yes"){
       #add confidence interval ranges
       pl <- pl %>% add_ribbons(x = ~time, ymin = ~lower_95, ymax = ~upper_95) %>%
         plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                              y = 0, yend = ~max(upper_95)+100, name = "Current Date",
-                             color = I("black"), alpha = 1)
+                             color = I("black"), alpha = 0.5)
     }
     else
     {
@@ -362,29 +362,30 @@ server <- function(input, output, session) {
                            y = 0, yend = ~max(value)+100, name = "Current Date",
                            color = I("black"), alpha = 0.5)
     }
+    #Test remove smoother functionality
+    
     # if requested by user, apply and show a smoothing function 
-    if (show_smoother == "Yes")
-    #if (outname == "outcome" && show_smoother == "Yes")
-    {
-      if (any(location_selector %in% p_dat$location))
-      {
-        p_dat2 <- p_dat  %>% select(location,scenario,value,time) %>% drop_na() %>%
-          group_by(location) %>%
-          filter(n() >= 2) %>%  
-          mutate(smoother = loess(value ~ as.numeric(time), span = .4)$fitted) %>%    
-          ungroup()
+#    if (show_smoother == "Yes")
+#    {
+#      if (any(location_selector %in% p_dat$location))
+#      {
+#        p_dat2 <- p_dat  %>% select(location,scenario,value,time) %>% drop_na() %>%
+#          group_by(location) %>%
+#          filter(n() >= 2) %>%  
+#          mutate(smoother = loess(value ~ as.numeric(time), span = .4)$fitted) %>%    
+#          ungroup()
         
-        pl <- pl %>% plotly::add_lines(x = ~time, y = ~smoother, 
-                                       color = ~location, data = p_dat2, 
-                                       line = list( width = 2*linesize),
-                                       opacity=0.3,
-                                       showlegend = FALSE) 
-     }
-     else
-     {
-        stop(safeError("Please select a different data scenario or location. The selected location(s) is not present in the chosen scenario"))
-     }
-    } #end smoother if statement
+#        pl <- pl %>% plotly::add_lines(x = ~time, y = ~smoother, 
+#                                       color = ~location, data = p_dat2, 
+#                                       line = list( width = 2*linesize),
+#                                       opacity=0.3,
+#                                       showlegend = FALSE) 
+#     }
+#     else
+#     {
+#        stop(safeError("Please select a different data scenario or location. The selected location(s) is not present in the chosen scenario"))
+#     }
+#    } #end smoother if statement
     return(pl)
   }
   
