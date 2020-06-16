@@ -74,26 +74,20 @@ get_data <- function()
 
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
      
-  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") 
-
-  #Notes on current data format:
-  #sim_type contains 3 different future scenarios, also includes data
-  #period is Past or Future, based on date up to which data is fit. Only applies to model results
-  #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
+   
+  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") %>%
+    #fix NAs on "data" scenario by recoding mean to median
+    mutate(median_value = ifelse(sim_type == "data", mean_value, median_value))
   
-  #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
-  # **** PRIORITY ONE-work on data restructuring as described above (plots will not function again until restructured)****
-  
-  us_dat <- us_dat_raw %>% left_join(us_popsize, by = "location") %>%
-                           rename(populationsize = pop_size, scenario = sim_type) %>%
+  us_dat <- us_dat_raw %>% select(location,date,variable,sim_type,median_value,lower_95,upper_95) %>%
+                           left_join(us_popsize, by = "location") %>%
+                           rename(populationsize = pop_size, value = median_value, scenario = sim_type) %>%
                            mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
                                                      daily_hosps = "Daily_Hospitalized", 
                                                      daily_deaths = "Daily_Deaths",
                                                      cumulative_cases = "Total_Cases", 
                                                      cumulative_hosps = "Total_Hospitalized", 
                                                      cumulative_deaths = "Total_Deaths")) 
-                          
-    
     
     
   #combine data in list  
@@ -135,25 +129,29 @@ ui <- fluidPage(
   tags$head(includeHTML(here("www","google-analytics.html"))), #this is for Google analytics tracking.
   includeCSS(here("www","appstyle.css")),
   #main tabs
-  navbarPage(
-    sidebarLayout(
+  navbarPage( title = "COVID-19 Forecast", id = 'current_tab', selected = "us", header = "",
+              tabPanel(title = "US States", value = "us",
+                       sidebarLayout(
                          sidebarPanel(
                            shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE,options = list(`actions-box` = TRUE), selected = c("Georgia") ),
                            shiny::div("US is at start of state list."),
                            br(),
-                           shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") ),
-                           shiny::div("Choose potential future scenarios."),
+                           shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("data", "status_quo") ),
+                           shiny::div("Choose potential future scenarios (see 'About' tab for details)."),
+                           br(),
+                           shiny::selectInput( "case_death",   "Outcome",c("Cases" = "Cases", "Hospitalizations" = "Hospitalized", "Deaths" = "Deaths")),
+                           shiny::div("Modify the top plot to display cases, hospitalizations, or deaths."),
                            br(),
                            shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "No"),
                            shiny::div("Show 95% confidence interval for forecast data."),
                            br(),
                            shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Total" = "Total" )),
-                           shiny::div("Modify all plots to show daily or cumulative data."),
+                           shiny::div("Modify all three plots to show daily or cumulative data."),
                            br(),
- #Test dropping smoother #  shiny::selectInput("show_smoother", "Add trend line", c("No" = "No", "Yes" = "Yes")),
-                         #  shiny::div("Shows a trend line for cases/hospitalizations/deaths plot."),
-                         #  br(),
-                           shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
+                           shiny::selectInput("show_smoother", "Add trend line", c("No" = "No", "Yes" = "Yes")),
+                           shiny::div("Shows a trend line for cases/hospitalizations/deaths plot."),
+                           br(),
+                           shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "actual", "Per 100,000 persons" = "scaled") ),
                            shiny::div("Modify the top two plots to display total counts or values scaled by the state/territory population size."),
                            br(),
                            shiny::selectInput("xscale", "Set x-axis to calendar date or days since a specified total number of cases/hospitalizations/deaths", c("Calendar Date" = "x_time", "Days since N cases/hospitalizations/deaths" = "x_count")),
@@ -167,18 +165,96 @@ ui <- fluidPage(
                          # Output:
                          mainPanel(
                            #change to plotOutput if using static ggplot object
-                           plotlyOutput(outputId = "transstrength_plot", height = "300px"),
-                           plotlyOutput(outputId = "case_plot", height = "300px"),
-                           plotlyOutput(outputId = "death_plot", height = "300px"),
-                           plotlyOutput(outputId = "allinf_plot", height = "300px")
+                           plotlyOutput(outputId = "case_death_plot", height = "500px"),
                          ) #end main panel
                        ) #end sidebar layout     
-  ), #close NavBarPage
-  tags$div(
-    id = "bigtext",
-    "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
-    "for more information and explanations."
-  )
+              ), #close US tab
+              
+              tabPanel( title = "About", value = "about",
+                        tagList(    
+                          fluidRow( #all of this is the header
+                            tags$div(
+                              id = "bigtext",
+                              "This COVID-19 tracker is brought to you by the",
+                              a("Center for the Ecology of Infectious Diseases",  href = "https://ceid.uga.edu", target = "_blank" ),
+                              "and the",
+                              a("College of Public Health", href = "https://publichealth.uga.edu", target = "_blank"),
+                              "at the",
+                              a("University of Georgia.", href = "https://www.uga.edu", target = "_blank"),
+                              "It was developed by",
+                              a("Robbie Richards,", href = "https://rlrichards.github.io", target =  "_blank"),
+                              a("William Norfolk", href = "https://github.com/williamnorfolk", target = "_blank"),
+                              "and ",
+                              a("Andreas Handel.", href = "https://www.andreashandel.com/", target = "_blank"),
+                              'scenario code for this project can be found',
+                              a( "in this GitHub repository.", href = "https://github.com/CEIDatUGA/COVID-shiny-tracker", target = "_blank" ),
+                              'We welcome feedback and feature requests, please send them as a',
+                              a( "GitHub Issue", href = "https://github.com/CEIDatUGA/COVID-shiny-tracker/issues", target = "_blank" ),
+                              'or contact',
+                              a("Andreas Handel.", href = "https://www.andreashandel.com/", target = "_blank")
+                            ),# and tag
+                            tags$div(
+                              id = "bigtext",
+                              "We currently include 4 different data scenarios for US states.", 
+                              a("The Covid Tracking Project",  href = "https://covidtracking.com/", target = "_blank" ),
+                              "data scenario reports all and positive tests, hospitalizations (some states) and deaths. We interpret positive tests as corresponding to new cases. The",
+                              a("New York Times (NYT),", href = "https://github.com/nytimes/covid-19-data", target = "_blank" ),
+                              a("USA Facts", href = "https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/", target = "_blank" ),
+                              "and",
+                              a("Johns Hopkins University Center for Systems Science and Engineering (JHU)", href = "https://github.com/CSSEGISandData/COVID-19", target = "_blank" ),
+                              "scenarios report cases and deaths."
+                              ), 
+                            tags$div(
+                              id = "bigtext",
+                              "For the county level plots, we use JHU data. (NY Times and USA Facts also provide data on the county level, however all 3 data scenarios are very similar and for speed/memory purposes we decided to only display one county level data scenario.)"         
+                              ), 
+                            tags$div(
+                              id = "bigtext",
+                              "World data comes from 2 different scenarios. One scenario is the", 
+                              a("Johns Hopkins University Center for Systems Science and Engineering (JHU)", href = "https://github.com/CSSEGISandData/COVID-19", target = "_blank" ),
+                              "the other scenario is",
+                              a("Our World in Data (OWID).", href = "https://github.com/owid/covid-19-data/tree/master/public/data", target = "_blank" ),
+                              "Both scenarios provide case and death data, OWID also provides testing data for some countries. For OWID, we assume reported cases correspond to positive tests."
+                            ),
+                            tags$div(
+                              id = "bigtext",
+                              "For more details on each data scenario, see their respective websites. Note that some data scenarios only report some data. Also, numbers might not be reliable, which can lead to nonsensical graphs (e.g. negative new daily cases/deaths or the fraction of positive tests being greater than 1). We make no attempt at cleaning/fixing the data, we only display it."
+                            ),              
+                            tags$div(
+                              id = "bigtext",
+                              a( "The Center for the Ecology of Infectious Diseases", href = "https://ceid.uga.edu", target = "_blank" ),
+                              'has several additional projects related to COVID-19, which can be found on the',
+                              a( "CEID COVID-19 Portal.", href = "http://2019-coronavirus-tracker.com/", target = "_blank" )
+                            ), #Close the bigtext text div
+                            tags$div(
+                              id = "bigtext",
+                              "If you are interested in learning more about infectious disease epidemiology and modeling, check out", 
+                              a("our (slightly advanced) interactive modeling software and tutorial.", href = "https://shiny.ovpr.uga.edu/DSAIDE/", target = "_blank" )
+                            ) #Close the bigtext text div
+                          ), #close fluidrow
+                          fluidRow( #all of this is the footer
+                            column(3,
+                                   a(href = "https://ceid.uga.edu", tags$img(src = "ceidlogo.png", width = "100%"), target = "_blank"),
+                            ),
+                            column(6,
+                                   p('All text and figures are licensed under a ',
+                                     a("Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.",
+                                       href = "http://creativecommons.org/licenses/by-nc-sa/4.0/", target = "_blank"),
+                                     'Software/Code is licensed under ',
+                                     a("GPL-3.", href = "https://www.gnu.org/licenses/gpl-3.0.en.html" , target =  "_blank"),
+                                     'See scenario data sites for licenses governing data.',
+                                     a("UGA's Privacy Policy.", href = "https://eits.uga.edu/access_and_security/infosec/pols_regs/policies/privacy/" , target =  "_blank"),
+                                     align = "center",
+                                     style = "font-size:small"
+                                   ) #end paragraph
+                            ), #end middle column
+                            column(3,
+                                   a(href = "https://publichealth.uga.edu", tags$img(src = "cphlogo.png", width = "100%"), target = "_blank")
+                            ) #end left column
+                          ) #end fluidrow
+                        ) #end taglist
+              ) #close about tab
+  ) #close NavBarPage
 ) #end fluidpage and UI part of shiny app
 #end UI of shiny app
 ###########################################
@@ -337,6 +413,7 @@ server <- function(input, output, session) {
                          paste0(tool_tip[1], ": ", p_dat$date), 
                          paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n")) 
     
+    ######FUTURE NOTE: right now plotly is plotting only the median values for "daily/total cases/deaths/hosp" may be better to change to max/mean values to match CEID's current patterm
     # make plot
     pl <- plotly::plot_ly(p_dat) %>% 
           plotly::add_trace(x = ~time, y = ~value, type = 'scatter', 
@@ -346,14 +423,13 @@ server <- function(input, output, session) {
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
-
-    #need to eliminate NAs in value and upper_95 to fix issues with Current Date bar bugs
+    
     if(conf_int == "Yes"){
       #add confidence interval ranges
       pl <- pl %>% add_ribbons(x = ~time, ymin = ~lower_95, ymax = ~upper_95) %>%
         plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                              y = 0, yend = ~max(upper_95)+100, name = "Current Date",
-                             color = I("black"), alpha = 0.5)
+                             color = I("black"), alpha = 1)
     }
     else
     {
@@ -362,93 +438,47 @@ server <- function(input, output, session) {
                            y = 0, yend = ~max(value)+100, name = "Current Date",
                            color = I("black"), alpha = 0.5)
     }
-    #Test remove smoother functionality
-    
     # if requested by user, apply and show a smoothing function 
-#    if (show_smoother == "Yes")
-#    {
-#      if (any(location_selector %in% p_dat$location))
-#      {
-#        p_dat2 <- p_dat  %>% select(location,scenario,value,time) %>% drop_na() %>%
-#          group_by(location) %>%
-#          filter(n() >= 2) %>%  
-#          mutate(smoother = loess(value ~ as.numeric(time), span = .4)$fitted) %>%    
-#          ungroup()
+    if (show_smoother == "Yes")
+    #if (outname == "outcome" && show_smoother == "Yes")
+    {
+      if (any(location_selector %in% p_dat$location))
+      {
+        p_dat2 <- p_dat  %>% select(location,scenario,value,time) %>% drop_na() %>%
+          group_by(location) %>%
+          filter(n() >= 2) %>%  
+          mutate(smoother = loess(value ~ as.numeric(time), span = .4)$fitted) %>%    
+          ungroup()
         
-#        pl <- pl %>% plotly::add_lines(x = ~time, y = ~smoother, 
-#                                       color = ~location, data = p_dat2, 
-#                                       line = list( width = 2*linesize),
-#                                       opacity=0.3,
-#                                       showlegend = FALSE) 
-#     }
-#     else
-#     {
-#        stop(safeError("Please select a different data scenario or location. The selected location(s) is not present in the chosen scenario"))
-#     }
-#    } #end smoother if statement
+        pl <- pl %>% plotly::add_lines(x = ~time, y = ~smoother, 
+                                       color = ~location, data = p_dat2, 
+                                       line = list( width = 2*linesize),
+                                       opacity=0.3,
+                                       showlegend = FALSE) 
+     }
+     else
+     {
+        stop(safeError("Please select a different data scenario or location. The selected location(s) is not present in the chosen scenario"))
+     }
+    } #end smoother if statement
     return(pl)
   }
   
   ###########################################
-  #function that makes case plot 
+  #function that makes case/death plot for US tab
   ###########################################
-  output$case_plot <- renderPlotly({
+  output$case_death_plot <- renderPlotly({
     pl <- NULL
     if (!is.null(input$scenario_selector))
     {
     #create plot
-    pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Cases", input$daily_tot,
+    pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$case_death, input$daily_tot,
                               input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$current_tab,
                               input$show_smoother, input$conf_int, ylabel = 1, outtype = '')
     }
     return(pl)
-  }) #end function making case plot
+  }) #end function making case/deaths plot
 
-  ###########################################
-  #function that makes all infected plot 
-  ###########################################
-  output$allinf_plot <- renderPlotly({
-    pl <- NULL
-    if (!is.null(input$scenario_selector))
-    {
-      #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Allinfected", input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$current_tab,
-                        input$show_smoother, input$conf_int, ylabel = 1, outtype = '')
-    }
-    return(pl)
-  }) #end function making all infected plot
-  
-  ###########################################
-  #function that makes death plot 
-  ###########################################
-  output$death_plot <- renderPlotly({
-    pl <- NULL
-    if (!is.null(input$scenario_selector))
-    {
-      #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Deaths", input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$current_tab,
-                        input$show_smoother, input$conf_int, ylabel = 1, outtype = '')
-    }
-    return(pl)
-  }) #end function making death plot
-  
-  ###########################################
-  #function that makes transmission strength plot 
-  ###########################################
-  output$transstrength_plot <- renderPlotly({
-    pl <- NULL
-    if (!is.null(input$scenario_selector))
-    {
-      #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Transstrength", input$daily_tot,
-                        input$xscale, input$yscale, "absolute", input$x_limit, input$current_tab,
-                        input$show_smoother, input$conf_int, ylabel = 1, outtype = '')
-    }
-    return(pl)
-  }) #end function making death plot
-  
 
 } #end server function
 
