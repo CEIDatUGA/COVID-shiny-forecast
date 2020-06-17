@@ -63,7 +63,6 @@ get_data <- function()
   #filelist <- unlist(lapply(content(resp)$tree, "[", "path"), use.names = F)
   #filenames = grep("output/current", filelist, value = TRUE, fixed = TRUE) 
   #csvfiles = filenames[stringr::str_which(filenames,"csv")]
-  
   #all_state_data = NULL
   #for (n in 1:length(csvfiles))
   #{
@@ -77,14 +76,12 @@ get_data <- function()
   us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") 
 
   #Notes on current data format:
-  #sim_type contains 3 different future scenarios, also includes data
+  #sim_type contains 3 different future scenarios, has NA for data
   #period is Past or Future, based on date up to which data is fit. Only applies to model results
   #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
   
   #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
   # **** PRIORITY ONE-work on data restructuring as described above (plots will not function again until restructured)****
-  
-  
   
   
   #interim
