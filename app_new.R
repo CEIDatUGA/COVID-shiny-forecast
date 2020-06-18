@@ -66,8 +66,6 @@ get_data <- function()
   #sim_type contains 3 different future scenarios, has NA for data
   #period is Past or Future, based on date up to which data is fit. Only applies to model results
   #variable includes latent_trend and mobility_trend and combined_trend. Those are stored in mean_value. Data are stored in mean_value as well.
-  
-  #did we remove "Cumulative_Allinfected? 
   us_dat <- us_dat_raw %>% 
             filter(variable != c("daily_hosps","cumulative_hosps")) %>% #not using hosp right now
             mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
@@ -75,8 +73,10 @@ get_data <- function()
                                     daily_deaths = "Daily_Deaths",
                                     cumulative_deaths = "Cumulative_Deaths",
                                     cumulative_cases = "Cumulative_Cases",                         
+                                    cumulative_all_infections = "Cumulative_Allinfected", 
                                     combined_trend = "Transmissionstrength"
                                     )) %>%
+            select(-c(lower_80,lower_90,upper_80,upper_90)) %>% #currently only using 95CI
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
@@ -126,7 +126,7 @@ server <- function(input, output, session)
     shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-  shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
   })
 
     
@@ -154,7 +154,8 @@ server <- function(input, output, session)
     
     #create name for outcome
     outcome = paste0(daily_tot,"_",outtype)
-    
+    ylabel = paste0(daily_tot," ",outtype)
+        
     #daily/cumulative does not exist for Transmissionstrength, so adjust for that
     if (outtype == 'Transmissionstrength') {outcome = outtype}
     
@@ -166,38 +167,12 @@ server <- function(input, output, session)
                                      group_by(scenario,location) %>%
                                      arrange(date) %>%
                                      ungroup()
-    
-    
     #adjust x-axis as needed 
-    if (xscale == 'x_count')
-    {
-      #filter by count limit
-      out_type2 = paste0("Cumulative_",outtype) #make string from UI inputs that correspond to total and selected outcome
-      start_dates <- plot_dat %>% 
-        filter(variable == out_type2) %>% #get the quantity (cases/hosp/death) which is used to define start
-        filter( median_value >= x_limit) %>% #remove all values that are below threshold
-        group_by(scenario,location) %>%   #group by states
-        summarize(start_date = first(date))   #get first date for each state after filtering. for this to work right, the data needs to be sorted by date for each scenario/location combination
-    
-      plot_dat <-  plot_dat %>% left_join(start_dates, by = c("scenario", "location")) %>% #add start dates to data
-                  filter(variable %in% outcome) %>% #retain only outcome variable
-                   filter(date >= start_date)  %>%      
-                   mutate(date = as.numeric(date)) %>%
-                   group_by(scenario, location) %>% 
-                   mutate(date = date - min(date)) %>%
-                   ungroup()
-    }
-    else
     {
       #filter by date limit
       plot_dat <- plot_dat %>%
-                  filter(variable %in% outcome) %>%
                   filter(date >= x_limit) 
     }
-
-    #Still an issue usign x_count with the trasnstrenght plot and allinfected plot
-    
-    
        
     # if we want scaling by 100K, do extra scaling 
     # this needs to be applied to all values, including CI, so need to figure out how to do
@@ -206,58 +181,60 @@ server <- function(input, output, session)
     {
       #plot_dat <- plot_dat %>% mutate(outcome = outcome / populationsize * 100000) 
     } #end scaling function
-     
-
+ 
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
     
-    # create text to show in hover-over tooltip
-   # tooltip_text = paste(paste0("Location: ", plot_dat$location), 
-    #                    paste0(tool_tip[1], ": ", plot_dat$date), 
-    #                    paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n"))
-    
     # make plot
-    pl <- plot_dat %>% 
+    if(outtype != "Transmissionstrength")
+    {
+      pl <- plot_dat %>% 
           filter(variable == outcome) %>%
+          group_by(scenario,location) %>%
+          arrange(date) %>%
           plotly::plot_ly() %>% 
           plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter', 
                                  mode = 'lines', 
-                                 linetype = ~scenario, symbol = ~location,
+                                 linetype = ~scenario, 
                                  line = list(width = linesize), #text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-                         # layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
+                          layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+      
+      #Adds confidence interval ribbons and/or current date bar
+      if(conf_int == "Yes")
+      {
+        #add confidence interval ranges
+        pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
+                                 name = "95% Condifence Interval", color = ~scenario,
+                                 showlegend = FALSE) 
+        }
+    } #end non-transmissions strength plots
     
     #need to add data to case and death plots
     
-    if(outtype == "Transstrenght"){
+    if(outtype == "Transmissionstrength")
+    {
       pl <- plot_dat %>% 
         filter(variable == outcome) %>%
+        group_by(scenario,location) %>%
+        arrange(date) %>%
         plotly::plot_ly() %>% 
         plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
                           mode = 'lines', 
-                          linetype = ~scenario, symbol = ~location,
+                          linetype = ~scenario, 
                           line = list(width = linesize), #text = tooltip_text, 
                           color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-        # layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
+         layout(yaxis = list(title="Transmission strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
     }
     
-    #Adds confidence interval ribbons and/or current date bar
-    if(conf_int == "Yes"){
-      #add confidence interval ranges
-      pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, name = "95% Condifence Interval") %>%
-        plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                             y = 0, yend = ~max(upper_95)+100, name = "Current Date",
-                             color = I("black"), alpha = 0.5)
-    }
-    else
-    {
-      #adds a verical line at the current date
-      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+    
+    #adds a verical line at the current date to all plots
+    pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                            y = 0, yend = ~max(median_value), name = "Current Date",
                            color = I("black"), alpha = 0.5)
-    }
+    
 
 
     return(pl)
@@ -337,7 +314,7 @@ ui <- fluidPage(
         uiOutput('scenario_selector'),
         shiny::div("Choose potential future scenarios."),
         br(),
-        shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "No"),
+        shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
         shiny::div("Show 95% confidence interval for forecast data."),
         br(),
         shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Cumulative" = "Cumulative" )),
@@ -346,8 +323,7 @@ ui <- fluidPage(
         shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
         shiny::div("Modify the top two plots to display total counts or values scaled by the state/territory population size."),
         br(),
-        shiny::selectInput("xscale", "Set x-axis to calendar date or days since a specified total number of cases/hospitalizations/deaths", c("Calendar Date" = "x_time", "Days since N cases/deaths" = "x_count")),
-        sliderInput(inputId = "x_limit", "Select a date or outcome value from which to start the plots.", min = as.Date("2020-01-22","%Y-%m-%d"),  max = Sys.Date(), value = as.Date("2020-02-01","%Y-%m-%d") ),
+        sliderInput(inputId = "x_limit", "Select a date from which to start the plots.", min = mindate,  max = Sys.Date(), value = defaultdate),
         shiny::div("Modify plots to begin at a specified starting date or outcome value designated in the slider above."),
         br(),
         shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
