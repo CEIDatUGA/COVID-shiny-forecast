@@ -59,13 +59,15 @@ get_data <- function()
   message('starting data processing')
   
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
-  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") 
+  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv")
+  
 
   #Notes on current data format:
   #sim_type contains 3 different future scenarios, has NA for data
   #period is Past or Future, based on date up to which data is fit. Only applies to model results
   #variable includes latent_trend and mobility_trend and combined_trend. Those are stored in mean_value. Data are stored in mean_value as well.
   
+  #did we remove "Cumulative_Allinfected? 
   us_dat <- us_dat_raw %>% 
             filter(variable != c("daily_hosps","cumulative_hosps")) %>% #not using hosp right now
             mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
@@ -77,6 +79,9 @@ get_data <- function()
                                     )) %>%
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
+  
+#Temporary fix to make transstrenght plot to work until next iteration of data is done with correction
+  us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
 
   #combine data in list  
   #currently only US, but set up for future use
@@ -164,33 +169,33 @@ server <- function(input, output, session)
     
     
     #adjust x-axis as needed 
-#    if (xscale == 'x_count')
-#    {
-#      #filter by count limit
-#      out_type2 = paste0("Total_",case_death) #make string from UI inputs that correspond to total and selected outcome
-#      start_dates <- plot_dat %>% 
-#        filter(variable == out_type2) %>% #get the quantity (cases/hosp/death) which is used to define start
-#        filter( value >= x_limit) %>% #remove all values that are below threshold
-#        group_by(scenario,location) %>%   #group by states
-#        summarize(start_date = first(date))   #get first date for each state after filtering. for this to work right, the data needs to be sorted by date for each scenario/location combination
-#    
-#      plot_dat <-  plot_dat %>% #left_join(start_dates, by = c("scenario", "location")) %>% #add start dates to data
-#                  filter(variable %in% outcome) %>% #retain only outcome variable
-#                   filter(date >= start_date)  %>%      
-#                   mutate(time = as.numeric(date)) %>%
-#                   group_by(scenario, location) %>% 
-#                   mutate(time = time - min(time)) %>%
-#                   ungroup()
-#    }
-#    else
-#    {
-#      #filter by date limit
-#      plot_dat <- plot_dat %>% mutate(time = date) %>%
-#                  filter(variable %in% outcome) %>%
-#                  filter(date >= x_limit) 
-#    }
-#****************************************************************    
+    if (xscale == 'x_count')
+    {
+      #filter by count limit
+      out_type2 = paste0("Cumulative_",outtype) #make string from UI inputs that correspond to total and selected outcome
+      start_dates <- plot_dat %>% 
+        filter(variable == out_type2) %>% #get the quantity (cases/hosp/death) which is used to define start
+        filter( median_value >= x_limit) %>% #remove all values that are below threshold
+        group_by(scenario,location) %>%   #group by states
+        summarize(start_date = first(date))   #get first date for each state after filtering. for this to work right, the data needs to be sorted by date for each scenario/location combination
     
+      plot_dat <-  plot_dat %>% left_join(start_dates, by = c("scenario", "location")) %>% #add start dates to data
+                  filter(variable %in% outcome) %>% #retain only outcome variable
+                   filter(date >= start_date)  %>%      
+                   mutate(date = as.numeric(date)) %>%
+                   group_by(scenario, location) %>% 
+                   mutate(date = date - min(date)) %>%
+                   ungroup()
+    }
+    else
+    {
+      #filter by date limit
+      plot_dat <- plot_dat %>%
+                  filter(variable %in% outcome) %>%
+                  filter(date >= x_limit) 
+    }
+
+    #Still an issue usign x_count with the trasnstrenght plot and allinfected plot
     
     
        
@@ -207,13 +212,10 @@ server <- function(input, output, session)
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
     
     # create text to show in hover-over tooltip
-#    tooltip_text = paste(paste0("Location: ", p_dat$location), 
-#                         paste0(tool_tip[1], ": ", p_dat$date), 
-#                         paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n"))
-
+   # tooltip_text = paste(paste0("Location: ", plot_dat$location), 
+    #                    paste0(tool_tip[1], ": ", plot_dat$date), 
+    #                    paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n"))
     
-    #browser()
-        
     # make plot
     pl <- plot_dat %>% 
           filter(variable == outcome) %>%
@@ -223,26 +225,39 @@ server <- function(input, output, session)
                                  linetype = ~scenario, symbol = ~location,
                                  line = list(width = linesize), #text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-                          #layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
+                         # layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
     
     #need to add data to case and death plots
     
-#    #need to eliminate NAs in value and upper_95 to fix issues with Current Date bar bugs
-#    if(conf_int == "Yes"){
-#      #add confidence interval ranges
-#      pl <- pl %>% add_ribbons(x = ~time, ymin = ~lower_95, ymax = ~upper_95) %>%
-#        plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-#                             y = 0, yend = ~max(upper_95)+100, name = "Current Date",
-#                             color = I("black"), alpha = 0.5)
-#    }
-#    else
-#    {
-#      #adds a verical line at the current date
-#      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-#                           y = 0, yend = ~max(value)+100, name = "Current Date",
-#                           color = I("black"), alpha = 0.5)
-#    }
+    if(outtype == "Transstrenght"){
+      pl <- plot_dat %>% 
+        filter(variable == outcome) %>%
+        plotly::plot_ly() %>% 
+        plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
+                          mode = 'lines', 
+                          linetype = ~scenario, symbol = ~location,
+                          line = list(width = linesize), #text = tooltip_text, 
+                          color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
+        # layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
+        layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+    }
+    
+    #Adds confidence interval ribbons and/or current date bar
+    if(conf_int == "Yes"){
+      #add confidence interval ranges
+      pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, name = "95% Condifence Interval") %>%
+        plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                             y = 0, yend = ~max(upper_95)+100, name = "Current Date",
+                             color = I("black"), alpha = 0.5)
+    }
+    else
+    {
+      #adds a verical line at the current date
+      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                           y = 0, yend = ~max(median_value), name = "Current Date",
+                           color = I("black"), alpha = 0.5)
+    }
 
 
     return(pl)
@@ -360,3 +375,4 @@ ui <- fluidPage(
 
 # Create Shiny object
 shinyApp(ui = ui, server = server)
+
