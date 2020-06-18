@@ -13,12 +13,11 @@ library(RColorBrewer)
 library(tm)
 library(httr) #for reading from github
 
-
 #***************
 # NOTES/TO DO
 # 1. modify "data" scenario so data can be shown behind the model data (use opacity command)-maybe add a new column for this to seperate this 
 # 2. add confidence interval data for future predictions
-# 3. clean up scenario and data stacking
+
 
 #prevent shiny from overwriting our error message
 #not used right now, using safeError below instead
@@ -81,29 +80,25 @@ get_data <- function()
   #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
   
   #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
-  # **** PRIORITY ONE-work on data restructuring as described above (plots will not function again until restructured)****
   
-  
-  #interim
   x <- us_dat_raw %>% 
-            pivot_wider(names_from = c(variable), values_from = value) %>%
-            group_by(location, sim_type, var_type, date) %>%
-            rename(Daily_Cases = daily_cases) %>%
-            rename(Daily_Deaths = daily_deaths) %>%
-            rename(Daily_Allinfected = daily_all_infections) %>%
-            mutate(Cumulative_Cases = cumsum(Daily_Cases) ) %>%
-            mutate(Cumulative_Deaths = cumsum(Daily_Deaths) ) %>%
-            mutate(Cumulative_Allinfected = cumsum(Daily_Allinfected) ) %>%
-            mutate(Transmissionstrength = latent_trend * mobility_trend) %>%
-            select(-daily_hosps,-latent_trend,-mobility_trend)        
+    pivot_longer(cols = c(-location, -sim_type, -period, -date, -variable), names_to = "var_type", values_to = "value") %>% #condense var_type
+    pivot_wider(names_from = c(variable), values_from = value) %>% #spread variables to save space
+    group_by(location, sim_type, var_type, date) %>%
+    rename(Daily_Cases = daily_cases) %>%
+    rename(Daily_Deaths = daily_deaths) %>%
+    rename(Daily_Allinfected = daily_all_infections) %>%
+    rename(Daily_Hospitalizations = daily_hosps) %>%
+    rename(Cumulative_Cases = cumulative_cases) %>%
+    rename(Cumulative_Deaths = cumulative_deaths) %>%
+    rename(Cumulative_Hospitalizations = cumulative_hosps) %>%
+    mutate(Cumulative_Allinfected = cumsum(Daily_Allinfected)) %>%
+    rename(Transmissionstrength = combined_trend) %>%
+    select(-c(mobility_trend, latent_trend, actual_daily_cases, actual_daily_deaths)) #do we want to keep the "actual_" variables also?
   
   us_dat <- x %>%
-            left_join(us_popsize, by = "location") %>%
-            rename(populationsize = pop_size, scenario = sim_type) 
-            
-            #mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
-            #                                         daily_all_infections = "Daily_Allinfected", 
-             #                                        daily_deaths = "Daily_Deaths")) 
+    left_join(us_popsize, by = "location") %>%
+    rename(populationsize = pop_size, scenario = sim_type)
             
     
   #combine data in list  
@@ -198,7 +193,19 @@ ui <- fluidPage(
 # Define server functions
 ###########################################
 server <- function(input, output, session) {
-
+  
+  ################################################################################################
+  #create the following UI elements on server and then add to UI since they depend on the variables above 
+  #those variables are only defined on server
+  ################################################################################################
+  output$state_selector = renderUI({
+    shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("Georgia","California","Washington") )
+  })
+  
+  output$scenario_selector = renderUI({
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
+  })
+  
   #watch the choice for the x-scale and choose what to show underneath accordingly
   observeEvent(input$xscale,
                {
@@ -224,6 +231,7 @@ server <- function(input, output, session) {
     
     outtype <- c(outtype_case, outtype_allinf, outtype_death, outtype_transstr)
     plot_dat <- all_plot_dat %>% mutate(outcome = get(outtype))
+    return(plot_dat)
   }
 
   ###########################################
@@ -244,7 +252,6 @@ server <- function(input, output, session) {
                                      arrange(date) %>%
                                      ungroup()
     
-
 #******************************Disabling temporarily to test new data structure
     
     #adjust x-axis as needed 
@@ -303,6 +310,8 @@ server <- function(input, output, session) {
 #                         paste0(tool_tip[1], ": ", p_dat$date), 
 #                         paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n"))
     
+    p_dat$date <- as.character(as.Date(p_dat$date),"%Y-%m-%d")
+    
     # make plot
     pl <- plotly::plot_ly(p_dat) %>% 
           plotly::add_trace(x = ~date, y = ~outcome, type = 'scatter', 
@@ -310,7 +319,7 @@ server <- function(input, output, session) {
                                  linetype = ~scenario, symbol = ~location,
                                  line = list(width = linesize), #text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-                          layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
+                          #layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
 
 #    #need to eliminate NAs in value and upper_95 to fix issues with Current Date bar bugs
@@ -332,6 +341,7 @@ server <- function(input, output, session) {
 
     return(pl)
   }
+  
   
   ###########################################
   #function that preps data for US tab
