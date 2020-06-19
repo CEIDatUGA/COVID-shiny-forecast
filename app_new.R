@@ -10,14 +10,12 @@ library(shinyWidgets)
 library(ggplot2)
 library(plotly)
 library(RColorBrewer)
-library(tm)
+#library(tm)
 library(httr) #for reading from github
 
 #***************
 # NOTES/TO DO
-# 1. modify "data" scenario so data can be shown behind the model data (use opacity command)-maybe add a new column for this to seperate this 
-# 2. add confidence interval data for future predictions
-# 3. remove R pacakges above that we are not actually using
+# 1. remove R pacakges above that we are not actually using
 
 
 #################################
@@ -73,7 +71,7 @@ get_data <- function()
                                     daily_deaths = "Daily_Deaths",
                                     cumulative_deaths = "Cumulative_Deaths",
                                     cumulative_cases = "Cumulative_Cases",                         
-                                    cumulative_all_infections = "Cumulative_Allinfected", 
+                                    cumulative_all_infections = "Cumulative_Allinfected", #we are missing this in the raw data
                                     combined_trend = "Transmissionstrength"
                                     )) %>%
             select(-c(lower_80,lower_90,upper_80,upper_90)) %>% #currently only using 95CI
@@ -83,7 +81,8 @@ get_data <- function()
 #Temporary fix to make transstrenght plot to work until next iteration of data is done with correction
   us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
 
-  #add actual data to a new column to add new plotly layer (there is likely a tidy-er way to do this, revist once working) 
+  #add actual data to a new column to add additional plotly layer. Actual data are only in "actual_" rows so need to case_when() then apply the values to all rows with same location + date
+  #(there is likely a tidy-er way to do this, revist once app is functional) 
   us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
     mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
  
@@ -101,11 +100,8 @@ get_data <- function()
     group_by(location) %>%
     mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
   
-  
-  
   us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
-    left_join(add_actual_death, by = c("date", "location"))%>%
-    select(-c(Actual_Daily_Cases, Actual_Daily_Deaths))
+    left_join(add_actual_death, by = c("date", "location"))
   
   #combine data in list  
   #currently only US, but set up for future use
@@ -141,6 +137,7 @@ server <- function(input, output, session)
   #define variables for location and scenario selectors
   state_var = sort(unique(us_dat$location))  
   scenario_var = sort(unique(us_dat$scenario))
+
   
   ################################################################################################
   #create the following UI elements on server and then add to UI since they depend on the variables above 
@@ -150,7 +147,7 @@ server <- function(input, output, session)
     shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", c("Maintain social distancing (status quo)" = "status_quo", "Increase social distancing" = "linear_increase_sd", "Return to normal" = "return_normal"), multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
   })
 
     
@@ -199,16 +196,21 @@ server <- function(input, output, session)
     }
        
     # if we want scaling by 100K, do extra scaling 
-    # this needs to be applied to all values, including CI, so need to figure out how to do
+    # this needs to be applied to all values, including CI, so need to figure out how to do-should be working now
     # don't apply to the transmissionstrength since it's an input
     if ((absolute_scaled == 'scaled') && (outtype != "Transmissionstrength"))
     {
-      #plot_dat <- plot_dat %>% mutate(outcome = outcome / populationsize * 100000) 
+      plot_dat <- plot_dat %>% mutate(median_value = median_value / populationsize * 100000) %>%
+                               mutate(lower_95 = lower_95 / populationsize * 100000) %>%
+                               mutate(upper_95 = upper_95 / populationsize * 100000) %>%
+                               mutate(actual_daily_cases = actual_daily_cases / populationsize * 100000) %>%
+                               mutate(actual_daily_deaths = actual_daily_deaths / populationsize * 100000) %>%
+                               mutate(actual_cumulative_cases = actual_cumulative_cases / populationsize * 100000) %>%
+                               mutate(actual_cumulative_deaths = actual_cumulative_deaths / populationsize * 100000)
     } #end scaling function
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
-    
     # make plot
     if(outtype != "Transmissionstrength")
     {
@@ -217,42 +219,46 @@ server <- function(input, output, session)
           group_by(scenario,location) %>%
           arrange(date) %>%
           plotly::plot_ly() %>% 
-          plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter', 
+          plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                  mode = 'lines', 
                                  linetype = ~scenario, 
                                  line = list(width = linesize), #text = tooltip_text, 
-                                 color = ~location, colors = brewer.pal(ncols, "Dark2")) %>%
+                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
       #add actual data on top of model data
-      #need to fix cumulative data and possibly stremline code 
+      #probably can streamline this at a later date
       if((outtype == "Cases") && (daily_tot == "Daily")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_cases, type = 'scatter',
                                        mode = 'lines',
                                        linetype = "Reported Cases",
-                                       line = list(width = linesize))
+                                       line = list(width = linesize, dash = "solid", color = "black"),
+                                       opacity = 0.5)
       }
       
       if((outtype == "Deaths") && (daily_tot == "Daily")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_deaths, type = 'scatter',
                                        mode = 'lines',
                                        linetype = "Reported Deaths",
-                                       line = list(width = linesize))
+                                       line = list(width = linesize, dash = "solid", color = "black"),
+                                       opacity = 0.5)
       }
       
       if((outtype == "Cases") && (daily_tot == "Cumulative")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_cases, type = 'scatter',
                                        mode = 'lines',
-                                       linetype = "Reported Deaths",
-                                       line = list(width = linesize))
+                                       linetype = "Reported Cases",
+                                       line = list(width = linesize, dash = "solid", color = "black"),
+                                       opacity = 0.5)
       }
       
       if((outtype == "Deaths") && (daily_tot == "Cumulative")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_deaths, type = 'scatter',
                                        mode = 'lines',
                                        linetype = "Reported Deaths",
-                                       line = list(width = linesize))
+                                       line = list(width = linesize, dash = "solid", color = "black"),
+                                       opacity = 0.5)
       }
       
       #Adds confidence interval ribbons and/or current date bar
@@ -260,18 +266,18 @@ server <- function(input, output, session)
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
-                                 name = "95% Condifence Interval", color = ~location,
+                                 name = "95% Confidence Interval", color = ~scenario,
                                  showlegend = FALSE) 
         #adds a verical line at the current date to all plots
         pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                                           y = 0, yend = ~max(upper_95), name = "Current Date",
-                                          color = I("black"), alpha = 0.5)
+                                          color = I("black"), alpha = 0.75)
       }
-      else #need to call else to ensure date line remains if conf_int = "No"
+      else #need to call else to ensure date line remains if conf_int = "No". Adds a 50% buffer to account for difference in median_value across permutations
       {
         pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                          y = 0, yend = ~max(median_value), name = "Current Date",
-                                          color = I("black"), alpha = 0.5)
+                                          y = 0, yend = ~max(median_value)*1.50, name = "Current Date",
+                                          color = I("black"), alpha = 0.75)
       }
     } #end non-transmissions strength plots
     
@@ -293,7 +299,7 @@ server <- function(input, output, session)
       #adds a verical line at the current date to all plots-need to add both locations to call max(median_value) here. 
       pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                                         y = 0, yend = ~max(median_value), name = "Current Date",
-                                        color = I("black"), alpha = 0.5)
+                                        color = I("black"), alpha = 0.75)
     }
 
 
