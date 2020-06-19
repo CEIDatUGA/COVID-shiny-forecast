@@ -19,12 +19,14 @@ library(httr) #for reading from github
 
 
 #################################
-#define some variables used often
+#define some variables 
 #################################
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
+#needs to follow order of scenarios
+scenarionames = c("Maintain social distancing (status quo)", "Increase social distancing", "Return to normal")
 
 
 #################################
@@ -59,49 +61,53 @@ get_data <- function()
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
   us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv")
   
-
   #Notes on current data format:
   #sim_type contains 3 different future scenarios, has NA for data
   #period is Past or Future, based on date up to which data is fit. Only applies to model results
   #variable includes latent_trend and mobility_trend and combined_trend. Those are stored in mean_value. Data are stored in mean_value as well.
   us_dat <- us_dat_raw %>% 
             filter(variable != c("daily_hosps","cumulative_hosps")) %>% #not using hosp right now
-            mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
-                                     daily_all_infections = "Daily_Allinfected", 
-                                    daily_deaths = "Daily_Deaths",
-                                    cumulative_deaths = "Cumulative_Deaths",
-                                    cumulative_cases = "Cumulative_Cases",                         
-                                    cumulative_all_infections = "Cumulative_Allinfected", #we are missing this in the raw data
-                                    combined_trend = "Transmissionstrength"
-                                    )) %>%
+            # mutate(variable = recode(variable,daily_cases = "Daily_Cases", 
+            #                                   daily_deaths = "Daily_Deaths",
+            #                                   daily_all_infections = "Daily_Allinfected", 
+            #                                   actual_daily_deaths = "Actual_Daily_Deaths",
+            #                                   actual_daily_cases = "Actual_Daily_Cases",
+            #                                   cumulative_cases = "Cumulative_Cases",                         
+            #                                   cumulative_deaths = "Cumulative_Deaths",
+            #                                   cumulative_all_infections = "Cumulative_Allinfected", #we are missing this in the raw data
+            #                                   actual_cumula_deaths = "Actual_Daily_Deaths",
+            #                                   actual_daily_cases = "Actual_Daily_Cases",
+            #                          
+            #                                   combined_trend = "Transmissionstrength"
+            #                         )) %>%
             select(-c(lower_80,lower_90,upper_80,upper_90)) %>% #currently only using 95CI
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
 #Temporary fix to make transstrenght plot to work until next iteration of data is done with correction
-  us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
+#  us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
 
   #add actual data to a new column to add additional plotly layer. Actual data are only in "actual_" rows so need to case_when() then apply the values to all rows with same location + date
   #(there is likely a tidy-er way to do this, revist once app is functional) 
-  us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
-    mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
- 
-   #assuming NA values for actual_daily_x are zero and elimiates any values beyond the current date 
-  us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases) & us_dat$date < Sys.Date()] <- 0
-  us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths) & us_dat$date < Sys.Date()] <- 0
-  
-  add_actual_case <- us_dat %>% group_by(date, location) %>%
-    summarize(actual_daily_cases = sum(Actual_Daily_Cases)) %>%
-    group_by(location) %>%
-    mutate(actual_cumulative_cases = cumsum(actual_daily_cases))
-  
-  add_actual_death <- us_dat %>% group_by(date, location) %>%
-    summarize(actual_daily_deaths = sum(Actual_Daily_Deaths)) %>%
-    group_by(location) %>%
-    mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
-  
-  us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
-    left_join(add_actual_death, by = c("date", "location"))
+  # us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
+  #   mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
+  # 
+  #  #assuming NA values for actual_daily_x are zero and elimiates any values beyond the current date 
+  # us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases) & us_dat$date < Sys.Date()] <- 0
+  # us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths) & us_dat$date < Sys.Date()] <- 0
+  # 
+  # add_actual_case <- us_dat %>% group_by(date, location) %>%
+  #   summarize(actual_daily_cases = sum(Actual_Daily_Cases)) %>%
+  #   group_by(location) %>%
+  #   mutate(actual_cumulative_cases = cumsum(actual_daily_cases))
+  # 
+  # add_actual_death <- us_dat %>% group_by(date, location) %>%
+  #   summarize(actual_daily_deaths = sum(Actual_Daily_Deaths)) %>%
+  #   group_by(location) %>%
+  #   mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
+  # 
+  # us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
+  #   left_join(add_actual_death, by = c("date", "location"))
   
   #combine data in list  
   #currently only US, but set up for future use
@@ -138,31 +144,19 @@ server <- function(input, output, session)
   state_var = sort(unique(us_dat$location))  
   scenario_var = sort(unique(us_dat$scenario))
 
+  names(scenario_var) <- scenarionames
+
   
   ################################################################################################
   #create the following UI elements on server and then add to UI since they depend on the variables above 
   #those variables are only defined on server
   ################################################################################################
   output$state_selector = renderUI({
-    shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("Georgia") )
+    shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE, options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", c("Maintain social distancing (status quo)" = "status_quo", "Increase social distancing" = "linear_increase_sd", "Return to normal" = "return_normal"), multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") )
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[1] )
   })
-
-    
-  #watch the choice for the x-scale and choose what to show underneath accordingly
-  observeEvent(input$xscale,
-  {
-   if (input$xscale == 'x_count')
-   {
-     #Add a reactive range to slider
-     shiny::updateSliderInput(session, "x_limit", min = 1,  max = 500, step = 10, value = 1 )
-   } else
-   {
-     shiny::updateSliderInput(session, "x_limit", min = mindate,  max = Sys.Date(), value = defaultdate )
-   }
-  }) #end observe event  
 
   
 
@@ -177,45 +171,34 @@ server <- function(input, output, session)
     outcome = paste0(daily_tot,"_",outtype)
     ylabel = paste0(daily_tot," ",outtype)
         
-    #daily/cumulative does not exist for Transmissionstrength, so adjust for that
-    if (outtype == 'Transmissionstrength') {outcome = outtype}
+    #daily/cumulative does not exist for combined_trend, so adjust for that
+    if (outtype == 'combined_trend') {outcome = outtype}
     
     #filter data based on user selections
     #keep all outcomes/variables for now so we can do x-axis adjustment
     #filtering of only the outcome to plot is done after x-scale adjustment
+    #not filter scenario here otherwise the data gets lost
     plot_dat <- all_dat %>%   filter(location %in% location_selector) %>%      
-                                     filter(scenario %in% scenario_selector) %>%
-                                     group_by(scenario,location) %>%
-                                     arrange(date) %>%
-                                     ungroup()
-    #adjust x-axis as needed 
-    {
-      #filter by date limit
-      plot_dat <- plot_dat %>%
-                  filter(date >= x_limit) 
-    }
+                                      filter(date >= x_limit) 
        
     # if we want scaling by 100K, do extra scaling 
     # this needs to be applied to all values, including CI, so need to figure out how to do-should be working now
     # don't apply to the transmissionstrength since it's an input
-    if ((absolute_scaled == 'scaled') && (outtype != "Transmissionstrength"))
+    if ((absolute_scaled == 'scaled') && (outtype != "combined_trend"))
     {
       plot_dat <- plot_dat %>% mutate(median_value = median_value / populationsize * 100000) %>%
                                mutate(lower_95 = lower_95 / populationsize * 100000) %>%
-                               mutate(upper_95 = upper_95 / populationsize * 100000) %>%
-                               mutate(actual_daily_cases = actual_daily_cases / populationsize * 100000) %>%
-                               mutate(actual_daily_deaths = actual_daily_deaths / populationsize * 100000) %>%
-                               mutate(actual_cumulative_cases = actual_cumulative_cases / populationsize * 100000) %>%
-                               mutate(actual_cumulative_deaths = actual_cumulative_deaths / populationsize * 100000)
+                               mutate(upper_95 = upper_95 / populationsize * 100000) 
     } #end scaling function
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
     # make plot
-    if(outtype != "Transmissionstrength")
+    if(outtype != "combined_trend")
     {
       pl <- plot_dat %>% 
           filter(variable == outcome) %>%
+          filter(scenario %in% scenario_selector) %>%
           group_by(scenario,location) %>%
           arrange(date) %>%
           plotly::plot_ly() %>% 
@@ -227,61 +210,26 @@ server <- function(input, output, session)
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
-      #add actual data on top of model data
-      #probably can streamline this at a later date
-      if((outtype == "Cases") && (daily_tot == "Daily")){
-        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_cases, type = 'scatter',
-                                       mode = 'lines',
-                                       linetype = "Reported Cases",
-                                       line = list(width = linesize, dash = "solid", color = "black"),
-                                       opacity = 0.5)
-      }
-      
-      if((outtype == "Deaths") && (daily_tot == "Daily")){
-        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_deaths, type = 'scatter',
-                                       mode = 'lines',
-                                       linetype = "Reported Deaths",
-                                       line = list(width = linesize, dash = "solid", color = "black"),
-                                       opacity = 0.5)
-      }
-      
-      if((outtype == "Cases") && (daily_tot == "Cumulative")){
-        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_cases, type = 'scatter',
-                                       mode = 'lines',
-                                       linetype = "Reported Cases",
-                                       line = list(width = linesize, dash = "solid", color = "black"),
-                                       opacity = 0.5)
-      }
-      
-      if((outtype == "Deaths") && (daily_tot == "Cumulative")){
-        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_deaths, type = 'scatter',
-                                       mode = 'lines',
-                                       linetype = "Reported Deaths",
-                                       line = list(width = linesize, dash = "solid", color = "black"),
-                                       opacity = 0.5)
-      }
-      
       #Adds confidence interval ribbons and/or current date bar
       if(conf_int == "Yes")
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
-                                 name = "95% Confidence Interval", color = ~scenario,
-                                 showlegend = FALSE) 
-        #adds a verical line at the current date to all plots
-        pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                          y = 0, yend = ~max(upper_95), name = "Current Date",
-                                          color = I("black"), alpha = 0.75)
+                                 name = "95% Confidence Interval", color = ~scenario, showlegend = FALSE) 
       }
-      else #need to call else to ensure date line remains if conf_int = "No". Adds a 50% buffer to account for difference in median_value across permutations
-      {
-        pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                          y = 0, yend = ~max(median_value)*1.50, name = "Current Date",
-                                          color = I("black"), alpha = 0.75)
-      }
+      
+      #add actual data on top of model data
+      actual_data <- plot_dat %>%  filter(variable == paste0("actual_",outcome)) %>%
+                     group_by(scenario,location) %>%
+                     arrange(date) 
+      
+      pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
+                                     mode = 'lines+markers',  data = actual_data,
+                                     marker = list(size = 10, color = "black", opacity = 0.5)
+                                     )
     } #end non-transmissions strength plots
     
-    if(outtype == "Transmissionstrength")
+    if(outtype == "combined_trend")
     {
       pl <- plot_dat %>% 
         filter(variable == outcome) %>%
@@ -315,7 +263,7 @@ server <- function(input, output, session)
     {
     #create plot
     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                              input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "Cases")
+                              input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
     }
     return(pl)
   }) #end function making case plot
@@ -329,7 +277,7 @@ server <- function(input, output, session)
     {
       #create plot
       pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "Allinfected")
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
     }
     return(pl)
   }) #end function making all infected plot
@@ -343,7 +291,7 @@ server <- function(input, output, session)
     {
       #create plot
       pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "Deaths")
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
     }
     return(pl)
   }) #end function making death plot
@@ -357,7 +305,7 @@ server <- function(input, output, session)
     {
       #create plot
       pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
-                        input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "Transmissionstrength")
+                        input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
     }
     return(pl)
   }) #end function making death plot
@@ -383,7 +331,7 @@ ui <- fluidPage(
         shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
         shiny::div("Show 95% confidence interval for forecast data."),
         br(),
-        shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Cumulative" = "Cumulative" )),
+        shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
         shiny::div("Modify all plots to show daily or cumulative data."),
         br(),
         shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
