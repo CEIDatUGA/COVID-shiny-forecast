@@ -86,18 +86,21 @@ get_data <- function()
   #add actual data to a new column to add new plotly layer (there is likely a tidy-er way to do this, revist once working) 
   us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
     mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
-  #assuming NA values for actual_daily_x are zero 
-  us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases)] <- 0
-  us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths)] <- 0
+ 
+   #assuming NA values for actual_daily_x are zero and elimiates any values beyond the current date 
+  us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases) & us_dat$date < Sys.Date()] <- 0
+  us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths) & us_dat$date < Sys.Date()] <- 0
   
   add_actual_case <- us_dat %>% group_by(date, location) %>%
     summarize(actual_daily_cases = sum(Actual_Daily_Cases)) %>%
     group_by(location) %>%
     mutate(actual_cumulative_cases = cumsum(actual_daily_cases))
+  
   add_actual_death <- us_dat %>% group_by(date, location) %>%
     summarize(actual_daily_deaths = sum(Actual_Daily_Deaths)) %>%
     group_by(location) %>%
     mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
+  
   
   
   us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
@@ -210,7 +213,7 @@ server <- function(input, output, session)
     if(outtype != "Transmissionstrength")
     {
       pl <- plot_dat %>% 
-          filter(variable == outcome | variable == "actual_daily_cases" | variable == "actual_daily_deaths") %>%
+          filter(variable == outcome) %>%
           group_by(scenario,location) %>%
           arrange(date) %>%
           plotly::plot_ly() %>% 
@@ -218,21 +221,35 @@ server <- function(input, output, session)
                                  mode = 'lines', 
                                  linetype = ~scenario, 
                                  line = list(width = linesize), #text = tooltip_text, 
-                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
+                                 color = ~location, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
       #add actual data on top of model data
       #need to fix cumulative data and possibly stremline code 
-      if(outtype == "Cases"){
+      if((outtype == "Cases") && (daily_tot == "Daily")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_cases, type = 'scatter',
                                        mode = 'lines',
                                        linetype = "Reported Cases",
                                        line = list(width = linesize))
       }
       
-      if(outtype == "Deaths"){
+      if((outtype == "Deaths") && (daily_tot == "Daily")){
         pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_daily_deaths, type = 'scatter',
+                                       mode = 'lines',
+                                       linetype = "Reported Deaths",
+                                       line = list(width = linesize))
+      }
+      
+      if((outtype == "Cases") && (daily_tot == "Cumulative")){
+        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_cases, type = 'scatter',
+                                       mode = 'lines',
+                                       linetype = "Reported Deaths",
+                                       line = list(width = linesize))
+      }
+      
+      if((outtype == "Deaths") && (daily_tot == "Cumulative")){
+        pl <- pl %>% plotly::add_trace(x = ~date, y = ~actual_cumulative_deaths, type = 'scatter',
                                        mode = 'lines',
                                        linetype = "Reported Deaths",
                                        line = list(width = linesize))
@@ -243,13 +260,19 @@ server <- function(input, output, session)
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
-                                 name = "95% Condifence Interval", color = ~scenario,
+                                 name = "95% Condifence Interval", color = ~location,
                                  showlegend = FALSE) 
         #adds a verical line at the current date to all plots
         pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
                                           y = 0, yend = ~max(upper_95), name = "Current Date",
                                           color = I("black"), alpha = 0.5)
-        }
+      }
+      else #need to call else to ensure date line remains if conf_int = "No"
+      {
+        pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                                          y = 0, yend = ~max(median_value), name = "Current Date",
+                                          color = I("black"), alpha = 0.5)
+      }
     } #end non-transmissions strength plots
     
     if(outtype == "Transmissionstrength")
