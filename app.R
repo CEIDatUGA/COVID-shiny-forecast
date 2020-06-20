@@ -10,105 +10,110 @@ library(shinyWidgets)
 library(ggplot2)
 library(plotly)
 library(RColorBrewer)
-library(tm)
+#library(tm)
 library(httr) #for reading from github
-
 
 #***************
 # NOTES/TO DO
-# 1. modify "data" scenario so data can be shown behind the model data (use opacity command)-maybe add a new column for this to seperate this 
-# 2. add confidence interval data for future predictions
-# 3. clean up scenario and data stacking
+# 1. remove R pacakges above that we are not actually using
 
-#prevent shiny from overwriting our error message
-#not used right now, using safeError below instead
-#options(shiny.sanitize.errors = FALSE)
+
+#################################
+#define some variables 
+#################################
+
+#starting date for date slider and default starting date to show
+mindate = as.Date("2020-02-01","%Y-%m-%d")
+defaultdate = as.Date("2020-03-01","%Y-%m-%d")
+#needs to follow order of scenarios
+scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing (status quo)")
+
 
 #################################
 # functions
 #################################
 
-github_api <- function(path) {
-  url <- httr::modify_url("https://api.github.com", path = path)
-  httr::GET(url)
+#function to capatalize the first letter in a string-used to make make tidy labels for the y-axis
+capitalize_first <- function(str) {
+  substr(str, 1, 1) <- toupper(substr(str, 1, 1))
+  return(str)
 }
-
 
 #################################
 # Load all data
 # should be online so things update automatically
-#for speed, we only get data from the online scenario if the data is old, otherwise we load locally
+# for speed, we only get data from the online scenario if the data is old, otherwise we load locally
 #################################
 
 # to ensure data gets refreshed on server, we need this
 get_data <- function()
 {
   filename = here("data",paste0("clean_data_",Sys.Date(),'.rds')) #if the data file for today is here, load then return from function
-  if (file.exists(filename)) {
+  if (file.exists(filename)) 
+  {
      all_data <- readRDS(file = filename)    
      return(all_data)  
   }
   #if data file is not here, go through all of the below
   
-   all_data = list() #will save and return all datasets as list
+  all_data = list() #will save and return all datasets as list
   
-   
   #################################
   #pull data from repo, combine and process
   #################################
   message('starting data processing')
   
-  #code to pull each state CSV - not currently used, doing a combined one as part of the other workflow  
-  #resp <- github_api("/repos/CEIDatUGA/COVID-stochastic-fitting/git/trees/master?recursive=1")
-  #filelist <- unlist(lapply(content(resp)$tree, "[", "path"), use.names = F)
-  #filenames = grep("output/current", filelist, value = TRUE, fixed = TRUE) 
-  #csvfiles = filenames[stringr::str_which(filenames,"csv")]
-  
-  #all_state_data = NULL
-  #for (n in 1:length(csvfiles))
-  #{
-  #  curfile = paste0("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/",csvfiles[n])  
-  #  state_data <- readr::read_csv(curfile)
-  #  all_state_data = dplyr::bind_rows(all_state_data,state_data)
-  #}
-
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
-     
-  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv") 
-
+  us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv")
+  
   #Notes on current data format:
-  #sim_type contains 3 different future scenarios, also includes data
+  #sim_type contains 3 different future scenarios, has NA for data
   #period is Past or Future, based on date up to which data is fit. Only applies to model results
-  #variable includes latent_trend and mobility_trend. Those are stored in mean_value. Data are stored in mean_value as well.
-  
-  #Data has these columns: location, sim_type (for simulations only, data should be moved into variable column), period, date, variable (including "data", "latent_trend","mobility_trend"), var_type (lower_95, mean_value, etc.) and value (the only column with a number/value in it)
-  # **** PRIORITY ONE-work on data restructuring as described above (plots will not function again until restructured)****
-  
-  
-  
-  
-  #interim
-  x <- us_dat_raw %>% 
-            pivot_wider(names_from = c(variable), values_from = value) %>%
-            group_by(location, sim_type, var_type, date) %>%
-            rename(Daily_Cases = daily_cases) %>%
-            rename(Daily_Deaths = daily_deaths) %>%
-            rename(Daily_Allinfected = daily_all_infections) %>%
-            mutate(Cumulative_Cases = cumsum(Daily_Cases) ) %>%
-            mutate(Cumulative_Deaths = cumsum(Daily_Deaths) ) %>%
-            mutate(Cumulative_Allinfected = cumsum(Daily_Allinfected) ) %>%
-            mutate(Transmissionstrength = latent_trend * mobility_trend) %>%
-            select(-daily_hosps,-latent_trend,-mobility_trend)        
-  
-  us_dat <- x %>%
+  #variable includes latent_trend and mobility_trend and combined_trend. Those are stored in mean_value. Data are stored in mean_value as well.
+  us_dat <- us_dat_raw %>% 
+            filter(variable != c("daily_hosps","cumulative_hosps")) %>% #not using hosp right now
+            # mutate(variable = recode(variable,daily_cases = "Daily_Cases", 
+            #                                   daily_deaths = "Daily_Deaths",
+            #                                   daily_all_infections = "Daily_Allinfected", 
+            #                                   actual_daily_deaths = "Actual_Daily_Deaths",
+            #                                   actual_daily_cases = "Actual_Daily_Cases",
+            #                                   cumulative_cases = "Cumulative_Cases",                         
+            #                                   cumulative_deaths = "Cumulative_Deaths",
+            #                                   cumulative_all_infections = "Cumulative_Allinfected", #we are missing this in the raw data
+            #                                   actual_cumula_deaths = "Actual_Daily_Deaths",
+            #                                   actual_daily_cases = "Actual_Daily_Cases",
+            #                          
+            #                                   combined_trend = "Transmissionstrength"
+            #                         )) %>%
+            select(-c(lower_80,lower_90,upper_80,upper_90)) %>% #currently only using 95CI
             left_join(us_popsize, by = "location") %>%
-            rename(populationsize = pop_size, scenario = sim_type) 
-            
-            #mutate(variable = recode(variable, daily_cases = "Daily_Cases", 
-            #                                         daily_all_infections = "Daily_Allinfected", 
-             #                                        daily_deaths = "Daily_Deaths")) 
-            
-    
+            rename(populationsize = pop_size, scenario = sim_type)
+  
+#Temporary fix to make transstrenght plot to work until next iteration of data is done with correction
+#  us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
+
+  #add actual data to a new column to add additional plotly layer. Actual data are only in "actual_" rows so need to case_when() then apply the values to all rows with same location + date
+  #(there is likely a tidy-er way to do this, revist once app is functional) 
+  # us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
+  #   mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
+  # 
+  #  #assuming NA values for actual_daily_x are zero and elimiates any values beyond the current date 
+  # us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases) & us_dat$date < Sys.Date()] <- 0
+  # us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths) & us_dat$date < Sys.Date()] <- 0
+  # 
+  # add_actual_case <- us_dat %>% group_by(date, location) %>%
+  #   summarize(actual_daily_cases = sum(Actual_Daily_Cases)) %>%
+  #   group_by(location) %>%
+  #   mutate(actual_cumulative_cases = cumsum(actual_daily_cases))
+  # 
+  # add_actual_death <- us_dat %>% group_by(date, location) %>%
+  #   summarize(actual_daily_deaths = sum(Actual_Daily_Deaths)) %>%
+  #   group_by(location) %>%
+  #   mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
+  # 
+  # us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
+  #   left_join(add_actual_death, by = c("date", "location"))
+  
   #combine data in list  
   #currently only US, but set up for future use
   all_data$us_dat = us_dat
@@ -120,242 +125,163 @@ get_data <- function()
   return(all_data)
 } # end the get-data function which pulls data from the various online scenarios and processes/saves  
 
-###########################################
-# function that re-reads the data every so often
-###########################################
-all_data <- reactivePoll(intervalMillis = 1000*60*60*3, # pull new data every N hours
-                         session = NULL,
-                         checkFunc = function() {Sys.time()}, #this will always return a different value, which means at intervals specified by intervalMillis the new data will be pulled
-                         valueFunc = function() {get_data()} )
-
-#read data is reactive, doesn't work for rest below 
-all_dat = isolate(all_data())
-
-# pull data out of list 
-us_dat = all_dat$us_dat 
-
-
-#define variables for location and scenario selectors
-state_var = sort(unique(us_dat$location))  
-state_var = c("US",state_var[!state_var=="US"]) #move US to front
-
-scenario_var = sort(unique(us_dat$scenario))
-
-#################################
-# Define UI
-#################################
-ui <- fluidPage(
-  tags$head(includeHTML(here("www","google-analytics.html"))), #this is for Google analytics tracking.
-  includeCSS(here("www","appstyle.css")),
-  #main tabs
-  navbarPage(
-    sidebarLayout(
-                         sidebarPanel(
-                           shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE,options = list(`actions-box` = TRUE), selected = c("Georgia") ),
-                           shiny::div("US is at start of state list."),
-                           br(),
-                           shinyWidgets::pickerInput("scenario_selector", "Select Scenarios(s)", scenario_var, multiple = TRUE,options = list(`actions-box` = TRUE), selected = c("status_quo") ),
-                           shiny::div("Choose potential future scenarios."),
-                           br(),
-                           shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "No"),
-                           shiny::div("Show 95% confidence interval for forecast data."),
-                           br(),
-                           shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "Daily", "Total" = "Total" )),
-                           shiny::div("Modify all plots to show daily or cumulative data."),
-                           br(),
- #Test dropping smoother #  shiny::selectInput("show_smoother", "Add trend line", c("No" = "No", "Yes" = "Yes")),
-                         #  shiny::div("Shows a trend line for cases/hospitalizations/deaths plot."),
-                         #  br(),
-                           shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
-                           shiny::div("Modify the top two plots to display total counts or values scaled by the state/territory population size."),
-                           br(),
-                           shiny::selectInput("xscale", "Set x-axis to calendar date or days since a specified total number of cases/hospitalizations/deaths", c("Calendar Date" = "x_time", "Days since N cases/hospitalizations/deaths" = "x_count")),
-                           sliderInput(inputId = "x_limit", "Select a date or outcome value from which to start the plots.", min = as.Date("2020-01-22","%Y-%m-%d"),  max = Sys.Date(), value = as.Date("2020-02-01","%Y-%m-%d") ),
-                           shiny::div("Modify all three plots to begin at a specified starting date or outcome value designated in the slider above."),
-                           br(),
-                           shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
-                           shiny::div("Modify the top two plots to show data on a linear or logarithmic scale."),
-                           br()
-                         ),         #end sidebar panel
-                         # Output:
-                         mainPanel(
-                           #change to plotOutput if using static ggplot object
-                           plotlyOutput(outputId = "transstrength_plot", height = "300px"),
-                           plotlyOutput(outputId = "case_plot", height = "300px"),
-                           plotlyOutput(outputId = "death_plot", height = "300px"),
-                           plotlyOutput(outputId = "allinf_plot", height = "300px")
-                         ) #end main panel
-                       ) #end sidebar layout     
-  ), #close NavBarPage
-  tags$div(
-    id = "bigtext",
-    "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
-    "for more information and explanations."
-  )
-) #end fluidpage and UI part of shiny app
-#end UI of shiny app
-###########################################
 
 
 ###########################################
 # Define server functions
 ###########################################
-server <- function(input, output, session) {
+server <- function(input, output, session) 
+{
 
-  #watch the choice for the x-scale and choose what to show underneath accordingly
-  observeEvent(input$xscale,
-               {
-                 if (input$xscale == 'x_count')
-                 {
-                   #Add a reactive range to slider
-                   shiny::updateSliderInput(session, "x_limit", min = 1,  max = 500, step = 10, value = 1 )
-                 } else
-                 {
-                   shiny::updateSliderInput(session, "x_limit", min = as.Date("2020-01-22","%Y-%m-%d"),  max = Sys.Date(), value = as.Date("2020-02-01","%Y-%m-%d") )
-                 }
-               }) #end observe event  
+  ###########################################
+  # function that re-reads the data every so often
+  ###########################################
+  all_data <- reactivePoll(intervalMillis = 1000*60*60*3, # pull new data every N hours
+                           session = NULL,
+                           checkFunc = function() {Sys.time()}, #this will always return a different value, which means at intervals specified by intervalMillis the new data will be pulled
+                           valueFunc = function() {get_data()} )
   
-  #watch the choice for the x-scale and choose what to show underneath accordingly
-  observeEvent(input$xscale_w,
-               {
-                 if (input$xscale_w == 'x_count')
-                 {
-                   #Add a reactive range to slider
-                   shiny::updateSliderInput(session, "x_limit_w", min = 1,  max = 500, step = 10, value = 1 )
-                 } else
-                 {
-                   shiny::updateSliderInput(session, "x_limit_w", min = as.Date("2020-01-22","%Y-%m-%d"),  max = Sys.Date(), value = as.Date("2020-02-01","%Y-%m-%d") )
-                 }
-               }) #end observe event 
+  #read data is reactive, doesn't work for rest below 
+  all_dat = isolate(all_data())
+  # pull data out of list 
+  us_dat = all_dat$us_dat 
+  #define variables for location and scenario selectors
+  state_var = sort(unique(us_dat$location))  
+  scenario_var = sort(unique(us_dat$scenario))
+
+  names(scenario_var) <- scenarionames
   
-  #watch the choice for the x-scale and choose what to show underneath accordingly
-  observeEvent(input$xscale_c,
-               {
-                 if (input$xscale_c == 'x_count')
-                 {
-                   #Add a reactive range to slider
-                   shiny::updateSliderInput(session, "x_limit_c", min = 1,  max = 500, step = 10, value = 1 )
-                 } else
-                 {
-                   shiny::updateSliderInput(session, "x_limit_c", min = as.Date("2020-01-22","%Y-%m-%d"),  max = Sys.Date(), value = as.Date("2020-02-01","%Y-%m-%d") )
-                 }
-               }) #end observe event  
+  #getting the date at which fitting was done, i.e. switch from 
+  #past to future. Might not be same as today's date
+  #done a bit clunky, could likely be done better (and tidy)
+  #assigned to a global variable
+  x <- us_dat %>% filter(location == "Alabama", variable == "actual_daily_cases")
+  nowdate <<- x$date[max(which(x$period == "Past"))]
   
-  #watch state_selector_c to reduce the picker options in the county dropdown limited to those within the selected state(s)
-  observeEvent(input$state_selector_c,
-               {
-                  #redesignate county_dat to match the state selector input
-                   county_dat_sub <- county_dat %>% filter(state %in% input$state_selector_c)
-                   county_var_sub = sort(unique(county_dat_sub$location))
-                   shinyWidgets::updatePickerInput(session, "county_selector", "Select counties", county_var_sub, selected = county_var_sub[1])
-             })
+  ################################################################################################
+  #create the following UI elements on server and then add to UI since they depend on the variables above 
+  #those variables are only defined on server
+  ################################################################################################
+  output$state_selector = renderUI({
+    shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE, options = list(`actions-box` = TRUE), selected = c("Georgia") )
+  })
+  output$scenario_selector = renderUI({
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[3] )
+  })
+
   
 
   ###########################################
-  # function that takes data generated by above function and makes plots
-  # uses plotly
+  # function that takes data and makes plots with plotly
   ###########################################
-  make_plotly <- function(all_plot_dat, location_selector, scenario_selector,case_death, daily_tot,
-                              xscale, yscale, absolute_scaled, x_limit, current_tab,  
-                              show_smoother, conf_int, ylabel, outtype)
+  make_plotly <- function(all_dat, location_selector, scenario_selector, daily_tot,
+                          xscale, yscale, absolute_scaled, x_limit, conf_int, ylabel, outtype)
   {
-
-    #outcome to plot/process for non-test
-    outcome = paste(daily_tot,case_death,sep='_') #make string from UI inputs that correspond with variable names
     
+    #create name for outcome
+    outcome = paste0(daily_tot,"_",outtype)
+    #daily/cumulative does not exist for combined_trend, so adjust for that
+    if (outtype == 'combined_trend') {outcome = outtype}
+    
+    #create y-axis names
+    y_tag = c(" Cases"," Deaths"," All Infected")
+    ylabel = paste0(daily_tot,y_tag,sep=" ")
+    ylabel = capitalize_first(ylabel)
+    #apply names to plots by outtype
+    if (outtype == 'cases') {ylabel = ylabel[1]}
+    if (outtype == 'deaths') {ylabel = ylabel[2]}
+    if (outtype == 'all_infections') {ylabel = ylabel[3]}
     
     #filter data based on user selections
     #keep all outcomes/variables for now so we can do x-axis adjustment
     #filtering of only the outcome to plot is done after x-scale adjustment
-    plot_dat <- all_plot_dat %>%   filter(location %in% location_selector) %>%      
-                                     filter(scenario %in% scenario_selector) %>%
-                                     group_by(scenario,location) %>%
-                                     arrange(date) %>%
-                                     ungroup()
-
-    #adjust x-axis as needed 
-    if (xscale == 'x_count')
-    {
-      #filter by count limit
-      out_type2 = paste0("Total_",case_death) #make string from UI inputs that correspond to total and selected outcome
-      start_dates <- plot_dat %>% 
-        filter(variable == out_type2) %>% #get the quantity (cases/hosp/death) which is used to define start
-        filter( value >= x_limit) %>% #remove all values that are below threshold
-        group_by(scenario,location) %>%   #group by states
-        summarize(start_date = first(date))   #get first date for each state after filtering. for this to work right, the data needs to be sorted by date for each scenario/location combination
-      
-      plot_dat <-  plot_dat %>% left_join(start_dates, by = c("scenario", "location")) %>% #add start dates to data
-                   filter(variable %in% outcome) %>% #retain only outcome variable
-                   filter(date >= start_date)  %>%      
-                   mutate(time = as.numeric(date)) %>%
-                   group_by(scenario, location) %>% 
-                   mutate(time = time - min(time)) %>%
-                   ungroup()
-    }
-    else
-    {
-      #filter by date limit
-      plot_dat <- plot_dat %>% mutate(time = date) %>%
-                  filter(variable %in% outcome) %>%
-                  filter(date >= x_limit) 
-    }
-    
-    
-    #set labels and tool tips based on input - entries 2 and 3 are ignored for world plot
-    y_labels <- c("Cases", "Tests", "Positive Test Proportion")
-    y_labels[1] <- case_death #fill that automatically with either Case/Hosp/Death
-    y_labels <- paste(daily_tot, y_labels, sep = " ")
-    
-    tool_tip <- c("Date", "Cases", "Tests", "Positive Test Proportion")
-    tool_tip[2] <- case_death #fill that automatically with either Case/Hosp/Death
-    
+    #not filter scenario here otherwise the data gets lost
+    plot_dat <- all_dat %>%   filter(location %in% location_selector) %>%      
+                                      filter(date >= x_limit) 
        
-    #if we want scaling by 100K, do extra scaling 
-    # don't apply to test proportion
-    if ((absolute_scaled == 'scaled') && (outtype != "Positive_Prop"))
+    # if we want scaling by 100K, do extra scaling 
+    # this needs to be applied to all values, including CI, so need to figure out how to do-should be working now
+    # don't apply to the transmissionstrength since it's an input
+    if ((absolute_scaled == 'scaled') && (outtype != "combined_trend"))
     {
-      plot_dat <- plot_dat %>% mutate(value = value / populationsize * 100000) 
-      y_labels[1] <- paste0(y_labels[1], " per 100K")
-      y_labels[2] <- paste0(y_labels[2], " per 100K")
+      plot_dat <- plot_dat %>% mutate(median_value = median_value / populationsize * 100000) %>%
+                               mutate(lower_95 = lower_95 / populationsize * 100000) %>%
+                               mutate(upper_95 = upper_95 / populationsize * 100000) 
     } #end scaling function
-     
-    p_dat <- plot_dat
-
+ 
     linesize = 1.5
-    ncols = max(3,length(unique(p_dat$location))) #number of colors for plotting
-    
-    # create text to show in hover-over tooltip
-    tooltip_text = paste(paste0("Location: ", p_dat$location), 
-                         paste0(tool_tip[1], ": ", p_dat$date), 
-                         paste0(tool_tip[ylabel+1],": ", outcome, sep ="\n")) 
-    
+    ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
+      
     # make plot
-    pl <- plotly::plot_ly(p_dat) %>% 
-          plotly::add_trace(x = ~time, y = ~value, type = 'scatter', 
-                                 mode = 'lines+markers', 
-                                 linetype = ~scenario, symbol = ~location,
-                                 line = list(width = linesize), text = tooltip_text, 
-                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-                          layout(yaxis = list(title=y_labels[ylabel], type = yscale, size = 18)) %>%
-                          layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
-
-    #need to eliminate NAs in value and upper_95 to fix issues with Current Date bar bugs
-    if(conf_int == "Yes"){
-      #add confidence interval ranges
-      pl <- pl %>% add_ribbons(x = ~time, ymin = ~lower_95, ymax = ~upper_95) %>%
-        plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                             y = 0, yend = ~max(upper_95)+100, name = "Current Date",
-                             color = I("black"), alpha = 0.5)
-    }
-    else
+    if(outtype != "combined_trend")
     {
-      #adds a verical line at the current date
-      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                           y = 0, yend = ~max(value)+100, name = "Current Date",
-                           color = I("black"), alpha = 0.5)
+      p_dat <- plot_dat %>% 
+        filter(variable == outcome) %>%
+        filter(scenario %in% scenario_selector) %>%
+        group_by(scenario,location) %>%
+        arrange(date)
+      
+      pl <- p_dat %>%
+          plotly::plot_ly() %>% 
+          plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
+                                 mode = 'lines', 
+                                 linetype = ~scenario, 
+                                 line = list(width = linesize), name = ~scenario, #text = tooltip_text, 
+                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
+                          layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
+                          layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+      
+      maxy = max(p_dat$median_value, na.rm = TRUE)
+      
+      #Adds confidence interval ribbons and/or current date bar
+      if(conf_int == "Yes")
+      {
+        #add confidence interval ranges
+        pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
+                                 name = "95% Confidence Interval", color = ~scenario, showlegend = FALSE) 
+        maxy = max(p_dat$upper_95, na.rm = TRUE)
+        
+      }
+      
+      #add actual data on top of model data
+      actual_data <- plot_dat %>%  
+                     filter(variable == paste0("actual_",outcome)) %>%
+                     group_by(scenario,location) %>%
+                     arrange(date) 
+      
+      pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
+                                     mode = 'lines+markers',  data = actual_data,
+                                     color = ~location, name = "Reported Data",
+                                     marker = list(size = 5, color = "black", opacity = 0.5))
+    } #end non-transmissions strength plots
+    
+    if(outtype == "combined_trend")
+    {
+      p_dat <- plot_dat %>% 
+        filter(variable == outcome) %>%
+        group_by(scenario,location) %>%
+        arrange(date)
+      
+      pl <- p_dat %>%
+        plotly::plot_ly() %>% 
+        plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
+                          mode = 'lines', 
+                          linetype = ~scenario, 
+                          line = list(width = linesize), #text = tooltip_text, 
+                          color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
+         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
+        layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+      
+      maxy = max(p_dat$mean_value, na.rm = TRUE)
+      
     }
 
-
+    #add date marker
+    pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
+                                      y = 0, yend = maxy, name = "",
+                                      color = I("black"), alpha = 0.75)
+    
+    
     return(pl)
   }
   
@@ -367,8 +293,8 @@ server <- function(input, output, session) {
     if (!is.null(input$scenario_selector))
     {
     #create plot
-    pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Cases", input$daily_tot,
-                              input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = '')
+    pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                              input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
     }
     return(pl)
   }) #end function making case plot
@@ -381,8 +307,8 @@ server <- function(input, output, session) {
     if (!is.null(input$scenario_selector))
     {
       #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Allinfected", input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = '')
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
     }
     return(pl)
   }) #end function making all infected plot
@@ -395,8 +321,8 @@ server <- function(input, output, session) {
     if (!is.null(input$scenario_selector))
     {
       #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Deaths", input$daily_tot,
-                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = '')
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
     }
     return(pl)
   }) #end function making death plot
@@ -409,8 +335,8 @@ server <- function(input, output, session) {
     if (!is.null(input$scenario_selector))
     {
       #create plot
-      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Transmissionstrength", input$daily_tot,
-                        input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = '')
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
+                        input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
     }
     return(pl)
   }) #end function making death plot
@@ -418,5 +344,56 @@ server <- function(input, output, session) {
 
 } #end server function
 
+
+#################################
+# Define UI
+#################################
+ui <- fluidPage(
+  tags$head(includeHTML(here("www","google-analytics.html"))), #this is for Google analytics tracking.
+  includeCSS(here("www","appstyle.css")),
+  #main tabs
+  sidebarLayout(
+      sidebarPanel(
+        uiOutput('state_selector'),
+        br(),
+        uiOutput('scenario_selector'),
+        shiny::div("Choose potential future scenarios."),
+        br(),
+        shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
+        shiny::div("Show 95% confidence interval for forecast data."),
+        br(),
+        shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
+        shiny::div("Modify all plots to show daily or cumulative data."),
+        br(),
+        shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
+        shiny::div("Modify the bottom three plots to display values scaled by the state population size."),
+        br(),
+        sliderInput(inputId = "x_limit", "Select a date from which to start the plots.", min = mindate,  max = Sys.Date(), value = defaultdate),
+        shiny::div("Modify plots to begin at a specified starting date designated in the slider above."),
+        br(),
+        shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
+        shiny::div("Modify outcome plots to show data on a linear or logarithmic scale."),
+        br()
+      ),         #end sidebar panel
+      # Output:
+      mainPanel(
+        #change to plotOutput if using static ggplot object
+        plotlyOutput(outputId = "transstrength_plot", height = "300px"),
+        plotlyOutput(outputId = "case_plot", height = "300px"),
+        plotlyOutput(outputId = "death_plot", height = "300px"),
+        plotlyOutput(outputId = "allinf_plot", height = "300px")
+      ) #end main panel
+    ), #end sidebar layout     
+  tags$div(
+    "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
+    "for more information and explanations."
+  )
+) #end fluidpage and UI part of shiny app
+#end UI of shiny app
+###########################################
+
+
+
 # Create Shiny object
 shinyApp(ui = ui, server = server)
+
