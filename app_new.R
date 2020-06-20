@@ -26,13 +26,18 @@ library(httr) #for reading from github
 mindate = as.Date("2020-02-01","%Y-%m-%d")
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
-scenarionames = c("Maintain social distancing (status quo)", "Increase social distancing", "Return to normal")
+scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing (status quo)")
 
 
 #################################
 # functions
 #################################
 
+#function to capatalize the first letter in a string-used to make make tidy labels for the y-axis
+capitalize_first <- function(str) {
+  substr(str, 1, 1) <- toupper(substr(str, 1, 1))
+  return(str)
+}
 
 #################################
 # Load all data
@@ -155,7 +160,7 @@ server <- function(input, output, session)
     shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE, options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[1] )
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[3] )
   })
 
   
@@ -169,10 +174,17 @@ server <- function(input, output, session)
     
     #create name for outcome
     outcome = paste0(daily_tot,"_",outtype)
-    ylabel = paste0(daily_tot," ",outtype)
-        
     #daily/cumulative does not exist for combined_trend, so adjust for that
     if (outtype == 'combined_trend') {outcome = outtype}
+    
+    #create y-axis names
+    y_tag = c(" Cases"," Deaths"," All Infected")
+    ylabel = paste0(daily_tot,y_tag,sep=" ")
+    ylabel = capitalize_first(ylabel)
+    #apply names to plots by outtype
+    if (outtype == 'cases') {ylabel = ylabel[1]}
+    if (outtype == 'deaths') {ylabel = ylabel[2]}
+    if (outtype == 'all_infections') {ylabel = ylabel[3]}
     
     #filter data based on user selections
     #keep all outcomes/variables for now so we can do x-axis adjustment
@@ -193,6 +205,7 @@ server <- function(input, output, session)
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
+      
     # make plot
     if(outtype != "combined_trend")
     {
@@ -205,7 +218,7 @@ server <- function(input, output, session)
           plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                  mode = 'lines', 
                                  linetype = ~scenario, 
-                                 line = list(width = linesize), #text = tooltip_text, 
+                                 line = list(width = linesize), name = ~scenario, #text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -216,6 +229,10 @@ server <- function(input, output, session)
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
                                  name = "95% Confidence Interval", color = ~scenario, showlegend = FALSE) 
+        #adds a verical line at the current date to all plots when confidence interval is off
+        pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                                          y = 0, yend = ~max(upper_95, na.rm = TRUE), name = "Current Date",
+                                          color = I("black"), alpha = 0.75, showlegend = FALSE)
       }
       
       #add actual data on top of model data
@@ -225,8 +242,20 @@ server <- function(input, output, session)
       
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
-                                     marker = list(size = 10, color = "black", opacity = 0.5)
-                                     )
+                                     color = ~location, name = "Reported Data",
+                                     marker = list(size = 5, color = "black", opacity = 0.5))
+      
+      #designate max height values for current date marker that change with user input
+      make_max <- plot_dat %>% filter(variable == outcome) %>% filter(scenario %in% scenario_selector)
+      max1 <- max(make_max$median_value, na.rm = TRUE)
+      max2 <- max(actual_data$median_value, na.rm = TRUE)
+      max_height <- c(max1, max2)
+      
+      #adds a verical line at the current date to all plots when confidence interval is off
+      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
+                                        y = 0, yend = ~max(max_height, na.rm = TRUE), name = "Current Date",
+                                        color = I("black"), alpha = 0.75)
+      
     } #end non-transmissions strength plots
     
     if(outtype == "combined_trend")
@@ -241,13 +270,13 @@ server <- function(input, output, session)
                           linetype = ~scenario, 
                           line = list(width = linesize), #text = tooltip_text, 
                           color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-         layout(yaxis = list(title="Transmission strength", type = yscale, size = 18)) %>%
+         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
-      
-      #adds a verical line at the current date to all plots-need to add both locations to call max(median_value) here. 
+      #add current date marker
       pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                        y = 0, yend = ~max(median_value), name = "Current Date",
+                                        y = 0, yend = ~max(mean_value), name = "Current Date",
                                         color = I("black"), alpha = 0.75)
+      
     }
 
 
