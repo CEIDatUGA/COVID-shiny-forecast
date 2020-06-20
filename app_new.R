@@ -150,7 +150,13 @@ server <- function(input, output, session)
   scenario_var = sort(unique(us_dat$scenario))
 
   names(scenario_var) <- scenarionames
-
+  
+  #getting the date at which fitting was done, i.e. switch from 
+  #past to future. Might not be same as today's date
+  #done a bit clunky, could likely be done better (and tidy)
+  #assigned to a global variable
+  x <- us_dat %>% filter(location == "Alabama", variable == "actual_daily_cases")
+  nowdate <<- x$date[max(which(x$period == "Past"))]
   
   ################################################################################################
   #create the following UI elements on server and then add to UI since they depend on the variables above 
@@ -229,10 +235,6 @@ server <- function(input, output, session)
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
                                  name = "95% Confidence Interval", color = ~scenario, showlegend = FALSE) 
-        #adds a verical line at the current date to all plots when confidence interval is off
-        pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                          y = 0, yend = ~max(upper_95, na.rm = TRUE), name = "Current Date",
-                                          color = I("black"), alpha = 0.75, showlegend = FALSE)
       }
       
       #add actual data on top of model data
@@ -244,18 +246,6 @@ server <- function(input, output, session)
                                      mode = 'lines+markers',  data = actual_data,
                                      color = ~location, name = "Reported Data",
                                      marker = list(size = 5, color = "black", opacity = 0.5))
-      
-      #designate max height values for current date marker that change with user input
-      make_max <- plot_dat %>% filter(variable == outcome) %>% filter(scenario %in% scenario_selector)
-      max1 <- max(make_max$median_value, na.rm = TRUE)
-      max2 <- max(actual_data$median_value, na.rm = TRUE)
-      max_height <- c(max1, max2)
-      
-      #adds a verical line at the current date to all plots when confidence interval is off
-      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                        y = 0, yend = ~max(max_height, na.rm = TRUE), name = "Current Date",
-                                        color = I("black"), alpha = 0.75)
-      
     } #end non-transmissions strength plots
     
     if(outtype == "combined_trend")
@@ -272,14 +262,16 @@ server <- function(input, output, session)
                           color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
          layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
-      #add current date marker
-      pl <- pl %>% plotly::add_segments(x = Sys.Date(), xend = Sys.Date(), 
-                                        y = 0, yend = ~max(mean_value), name = "Current Date",
-                                        color = I("black"), alpha = 0.75)
-      
+        
     }
 
-
+    browser()
+    #add date marker
+    pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
+                                      y = 0, yend = 1000, name = "",
+                                      color = I("black"), alpha = 0.75)
+    
+    
     return(pl)
   }
   
