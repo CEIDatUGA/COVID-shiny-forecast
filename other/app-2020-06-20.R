@@ -10,6 +10,7 @@ library(shinyWidgets)
 library(ggplot2)
 library(plotly)
 library(RColorBrewer)
+#library(tm)
 library(httr) #for reading from github
 
 #***************
@@ -25,7 +26,7 @@ library(httr) #for reading from github
 mindate = as.Date("2020-02-01","%Y-%m-%d")
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
-scenarionames = c("Increase social distancing", "Stop social distancing", "Current trajectory")
+scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing (status quo)")
 
 
 #################################
@@ -36,16 +37,6 @@ scenarionames = c("Increase social distancing", "Stop social distancing", "Curre
 capitalize_first <- function(str) {
   substr(str, 1, 1) <- toupper(substr(str, 1, 1))
   return(str)
-}
-
-build_legend <- function(p_dat, scenario_var){
-  #make reactive legend names based on picker inputs
-  make_legend <- match(p_dat$scenario, scenario_var)
-  make_legend <- recode(make_legend,
-                        "1" = "Increase social distancing",
-                        "2" = "Stop social distancing",
-                        "3" = "Current trajectory")
-  return(make_legend)
 }
 
 #################################
@@ -207,7 +198,7 @@ server <- function(input, output, session)
     #not filter scenario here otherwise the data gets lost
     plot_dat <- all_dat %>%   filter(location %in% location_selector) %>%      
                                       filter(date >= x_limit) 
-    
+       
     # if we want scaling by 100K, do extra scaling 
     # this needs to be applied to all values, including CI, so need to figure out how to do-should be working now
     # don't apply to the transmissionstrength since it's an input
@@ -220,7 +211,7 @@ server <- function(input, output, session)
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
-
+      
     # make plot
     if(outtype != "combined_trend")
     {
@@ -230,17 +221,13 @@ server <- function(input, output, session)
         group_by(scenario,location) %>%
         arrange(date)
       
-      #make reactive legend names based on picker inputs
-      legend_name <- build_legend(p_dat, scenario_var)
-      
       pl <- p_dat %>%
           plotly::plot_ly() %>% 
           plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                  mode = 'lines', 
-                                 linetype = ~location, 
-                                 line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
+                                 linetype = ~scenario, 
+                                 line = list(width = linesize), name = ~scenario, #text = tooltip_text, 
                                  color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-                          layout(xaxis = list(title = "Date")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
@@ -251,8 +238,7 @@ server <- function(input, output, session)
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
-                                 name = "95% Confidence Interval", 
-                                 color = ~scenario, showlegend = FALSE, opacity = 0.5) 
+                                 name = "95% Confidence Interval", color = ~scenario, showlegend = FALSE) 
         maxy = max(p_dat$upper_95, na.rm = TRUE)
         
       }
@@ -263,10 +249,9 @@ server <- function(input, output, session)
                      group_by(scenario,location) %>%
                      arrange(date) 
       
-      #set line color to #E7298A the forth element in rcolorbrewer Dark2 pallette so it meshes with the other three
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
-                                     line = list(color = "#E7298A"), opacity = 0.5, name = "Reported Data",
+                                     color = ~location, name = "Reported Data",
                                      marker = list(size = 5, color = "black", opacity = 0.5))
     } #end non-transmissions strength plots
     
@@ -277,18 +262,14 @@ server <- function(input, output, session)
         group_by(scenario,location) %>%
         arrange(date)
       
-      #make reactive legend names based on picker inputs
-      legend_name <- build_legend(p_dat, scenario_var)
-      
       pl <- p_dat %>%
         plotly::plot_ly() %>% 
         plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
                           mode = 'lines', 
                           linetype = ~scenario, 
-                          line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
+                          line = list(width = linesize), #text = tooltip_text, 
                           color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
-        layout(xaxis = list(title = "Date")) %>%
-        layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
+         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
       maxy = max(p_dat$mean_value, na.rm = TRUE)
@@ -297,9 +278,8 @@ server <- function(input, output, session)
 
     #add date marker
     pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
-                                      y = 0, yend = maxy, name = "Current Date",
-                                      color = I("black"), alpha = 0.75,
-                                      showlegend = FALSE)
+                                      y = 0, yend = maxy, name = "",
+                                      color = I("black"), alpha = 0.75)
     
     
     return(pl)
