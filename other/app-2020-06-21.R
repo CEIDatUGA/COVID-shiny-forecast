@@ -12,16 +12,20 @@ library(plotly)
 library(RColorBrewer)
 library(httr) #for reading from github
 
+#***************
+# NOTES/TO DO
+# 1. remove R pacakges above that we are not actually using
+
+
 #################################
 #define some variables 
 #################################
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data: maybe something like Sys.Date() + x number of days from the model data?
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
-scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
+scenarionames = c("Increase social distancing", "Stop social distancing", "Current trajectory")
 
 
 #################################
@@ -39,8 +43,8 @@ build_legend <- function(p_dat, scenario_var){
   make_legend <- match(p_dat$scenario, scenario_var)
   make_legend <- recode(make_legend,
                         "1" = "Increase social distancing",
-                        "2" = "Return to normal",
-                        "3" = "Maintain social distancing")
+                        "2" = "Stop social distancing",
+                        "3" = "Current trajectory")
   return(make_legend)
 }
 
@@ -90,7 +94,7 @@ get_data <- function()
             #                          
             #                                   combined_trend = "Transmissionstrength"
             #                         )) %>%
-            select(-c(lower_95,lower_90,upper_95)) %>% #currently only using 80CI
+            select(-c(lower_80,lower_90,upper_80,upper_90)) %>% #currently only using 95CI
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
@@ -155,7 +159,7 @@ server <- function(input, output, session)
   scenario_var = sort(unique(us_dat$scenario))
 
   names(scenario_var) <- scenarionames
-
+  
   #getting the date at which fitting was done, i.e. switch from 
   #past to future. Might not be same as today's date
   #done a bit clunky, could likely be done better (and tidy)
@@ -171,8 +175,7 @@ server <- function(input, output, session)
     shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE, options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-    checkboxGroupInput("scenario_selector", label = h4("Select Scenario(s)"), choices = scenario_var, selected = c("status_quo","return_normal","linear_increase_sd") )
-  #shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[3] )
+  shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[3] )
   })
 
   
@@ -203,7 +206,7 @@ server <- function(input, output, session)
     #filtering of only the outcome to plot is done after x-scale adjustment
     #not filter scenario here otherwise the data gets lost
     plot_dat <- all_dat %>%   filter(location %in% location_selector) %>%      
-                                      filter(date >= input$x_limit[1] &  date <= input$x_limit[2])
+                                      filter(date >= x_limit) 
     
     # if we want scaling by 100K, do extra scaling 
     # this needs to be applied to all values, including CI, so need to figure out how to do-should be working now
@@ -211,14 +214,13 @@ server <- function(input, output, session)
     if ((absolute_scaled == 'scaled') && (outtype != "combined_trend"))
     {
       plot_dat <- plot_dat %>% mutate(median_value = median_value / populationsize * 100000) %>%
-                               mutate(lower_80 = lower_80 / populationsize * 100000) %>%
-                               mutate(upper_80 = upper_80 / populationsize * 100000) 
+                               mutate(lower_95 = lower_95 / populationsize * 100000) %>%
+                               mutate(upper_95 = upper_95 / populationsize * 100000) 
     } #end scaling function
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
-    colors <- c("#5798d1", "#a11c3e", "#319045")
-    
+
     # make plot
     if(outtype != "combined_trend")
     {
@@ -237,7 +239,7 @@ server <- function(input, output, session)
                                  mode = 'lines', 
                                  linetype = ~location, 
                                  line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
-                                 color = ~scenario, colors = colors) %>%
+                                 color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
                           layout(xaxis = list(title = "Date")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -245,13 +247,13 @@ server <- function(input, output, session)
       maxy = max(p_dat$median_value, na.rm = TRUE)
       
       #Adds confidence interval ribbons and/or current date bar
-      if(conf_int == TRUE)
+      if(conf_int == "Yes")
       {
         #add confidence interval ranges
-        pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_80, ymax = ~upper_80, 
-                                 name = "80% Confidence Interval", 
+        pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_95, ymax = ~upper_95, 
+                                 name = "95% Confidence Interval", 
                                  color = ~scenario, showlegend = FALSE, opacity = 0.5) 
-        maxy = max(p_dat$upper_80, na.rm = TRUE)
+        maxy = max(p_dat$upper_95, na.rm = TRUE)
         
       }
       
@@ -261,9 +263,10 @@ server <- function(input, output, session)
                      group_by(scenario,location) %>%
                      arrange(date) 
       
+      #set line color to #E7298A the forth element in rcolorbrewer Dark2 pallette so it meshes with the other three
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
-                                     line = list(color = "grey"), opacity = 0.5, name = "Reported Data",
+                                     line = list(color = "#E7298A"), opacity = 0.5, name = "Reported Data",
                                      marker = list(size = 5, color = "black", opacity = 0.5))
     } #end non-transmissions strength plots
     
@@ -283,7 +286,7 @@ server <- function(input, output, session)
                           mode = 'lines', 
                           linetype = ~scenario, 
                           line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
-                          color = ~scenario, colors = colors) %>%
+                          color = ~scenario, colors = brewer.pal(ncols, "Dark2")) %>%
         layout(xaxis = list(title = "Date")) %>%
         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -294,102 +297,70 @@ server <- function(input, output, session)
 
     #add date marker
     pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
-                                      y = 0, yend = maxy, name = nowdate,
+                                      y = 0, yend = maxy, name = "Current Date",
                                       color = I("black"), alpha = 0.75,
-                                      showlegend = FALSE)  %>%
-            layout(annotations = list(x = nowdate, y = maxy, text = nowdate,
-                                      xref = "x", yref = "y",
-                                      showarrow = TRUE, arrowhead = 3,
-                                      ax = 20, ay = -40))
+                                      showlegend = FALSE)
     
     
     return(pl)
   }
   
   ###########################################
-  #make plots
-  output$all_plots <- renderPlotly({
-    
-  if (!is.null(input$scenario_selector))
-  {
-    #transmission strength plot
-    p1 <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
-                      input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
-    #create case plot
-    p2 <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                      input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
-    #death plot
-    p3 <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                      input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
-    
-    #create all  infections plot
-    p4 <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-                      input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
-  
-  all_plots <-  plotly::subplot(p1, p2, p3, p4, 
-                    nrows = 4, heights = c(.25,.25,.25,.25), 
-                    shareX = TRUE, titleY = TRUE
-    )
-  }
-  }) #end function making plots
-  
-  
-    
-  ###########################################
   #function that makes case plot 
   ###########################################
-  # output$case_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #   #create plot
-  #   pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                             input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
-  #   }
-  #   return(pl)
-  # }) #end function making case plot
-  # 
-  # ###########################################
-  # #function that makes all infected plot 
-  # ###########################################
-  # output$allinf_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                       input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
-  #   }
-  #   return(pl)
-  # }) #end function making all infected plot
-  # 
-  # ###########################################
-  # #function that makes death plot 
-  # ###########################################
-  # output$death_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                       input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
-  #   }
-  #   return(pl)
-  # }) #end function making death plot
-  # 
-  # ###########################################
-  # #function that makes transmission strength plot 
-  # ###########################################
-  # output$transstrength_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
-  #                       input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
-  #   }
-  #   return(pl)
-  # }) #end function making death plot
+  output$case_plot <- renderPlotly({
+    pl <- NULL
+    if (!is.null(input$scenario_selector))
+    {
+    #create plot
+    pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                              input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
+    }
+    return(pl)
+  }) #end function making case plot
+
+  ###########################################
+  #function that makes all infected plot 
+  ###########################################
+  output$allinf_plot <- renderPlotly({
+    pl <- NULL
+    if (!is.null(input$scenario_selector))
+    {
+      #create plot
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
+    }
+    return(pl)
+  }) #end function making all infected plot
+  
+  ###########################################
+  #function that makes death plot 
+  ###########################################
+  output$death_plot <- renderPlotly({
+    pl <- NULL
+    if (!is.null(input$scenario_selector))
+    {
+      #create plot
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
+                        input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
+    }
+    return(pl)
+  }) #end function making death plot
+  
+  ###########################################
+  #function that makes transmission strength plot 
+  ###########################################
+  output$transstrength_plot <- renderPlotly({
+    pl <- NULL
+    if (!is.null(input$scenario_selector))
+    {
+      #create plot
+      pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
+                        input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
+    }
+    return(pl)
+  }) #end function making death plot
+  
 
 } #end server function
 
@@ -404,36 +375,33 @@ ui <- fluidPage(
   sidebarLayout(
       sidebarPanel(
         uiOutput('state_selector'),
+        br(),
         uiOutput('scenario_selector'),
+        shiny::div("Choose potential future scenarios."),
         br(),
-        shiny::checkboxInput("conf_int", label = h4("Show 80% confidence interval"), value = TRUE),
-        #shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
-        #shiny::div("Show 80% confidence interval for forecast data."),
+        shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
+        shiny::div("Show 95% confidence interval for forecast data."),
         br(),
-        shiny::radioButtons("daily_tot", label = h4("Daily or cumulative numbers"), choices = list("Daily" = "daily", "Cumulative" = "cumulative"), selected = "daily"),
-       #shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
+        shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
         shiny::div("Modify all plots to show daily or cumulative data."),
         br(),
-        shiny::radioButtons("absolute_scaled", label = h4("Absolute or scaled values"), choices = list("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled"), selected = "absolute"),
-        #shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
+        shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
         shiny::div("Modify the bottom three plots to display values scaled by the state population size."),
         br(),
-        sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate)),
+        sliderInput(inputId = "x_limit", "Select a date from which to start the plots.", min = mindate,  max = Sys.Date(), value = defaultdate),
         shiny::div("Modify plots to begin at a specified starting date designated in the slider above."),
         br(),
-        shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
-        #shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
+        shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
         shiny::div("Modify outcome plots to show data on a linear or logarithmic scale."),
         br()
       ),         #end sidebar panel
       # Output:
       mainPanel(
         #change to plotOutput if using static ggplot object
-        #plotlyOutput(outputId = "transstrength_plot", height = "300px"),
-        #plotlyOutput(outputId = "case_plot", height = "300px"),
-        #plotlyOutput(outputId = "death_plot", height = "300px"),
-        plotlyOutput(outputId = "all_plots", height = "1000px")
-        #plotlyOutput(outputId = "allinf_plot", height = "300px")
+        plotlyOutput(outputId = "transstrength_plot", height = "300px"),
+        plotlyOutput(outputId = "case_plot", height = "300px"),
+        plotlyOutput(outputId = "death_plot", height = "300px"),
+        plotlyOutput(outputId = "allinf_plot", height = "300px")
       ) #end main panel
     ), #end sidebar layout     
   tags$div(
