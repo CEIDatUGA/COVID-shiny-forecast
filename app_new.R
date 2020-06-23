@@ -18,7 +18,7 @@ library(httr) #for reading from github
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data
+maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data: maybe something like Sys.Date() + x number of days from the model data?
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
@@ -294,10 +294,10 @@ server <- function(input, output, session)
 
     #add date marker
     pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
-                                      y = 0, yend = maxy, name = "Current Date",
+                                      y = 0, yend = maxy, name = nowdate,
                                       color = I("black"), alpha = 0.75,
                                       showlegend = FALSE)  %>%
-            layout(annotations = list(x = Sys.Date(), y = maxy, text = "Current Date",
+            layout(annotations = list(x = Sys.Date(), y = maxy, text = nowdate,
                                       xref = "x", yref = "y",
                                       showarrow = TRUE, arrowhead = 3,
                                       ax = 20, ay = -40))
@@ -389,7 +389,7 @@ ui <- fluidPage(
         #shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
         shiny::div("Modify the bottom three plots to display values scaled by the state population size."),
         br(),
-        sliderInput(inputId = "x_limit", "Select a date from which to start the plots.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate)),
+        sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate)),
         shiny::div("Modify plots to begin at a specified starting date designated in the slider above."),
         br(),
         shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
