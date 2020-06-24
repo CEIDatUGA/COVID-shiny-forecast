@@ -22,7 +22,7 @@ maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with 
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
-
+actualnames = c("actual_daily_cases", "actual_daily_deaths", "actual_cumulative_cases", "actual_cumulative_deaths")
 
 #################################
 # functions
@@ -34,6 +34,7 @@ capitalize_first <- function(str) {
   return(str)
 }
 
+#function to build tidy legend labels by scenario 
 build_legend <- function(p_dat, scenario_var){
   #make reactive legend names based on picker inputs
   make_legend <- match(p_dat$scenario, scenario_var)
@@ -66,7 +67,7 @@ get_data <- function()
   #################################
   #pull data from repo, combine and process
   #################################
-  message('starting data processing')
+  #message('starting data processing')
   
   us_popsize <- readRDS(here("data","us_popsize.rds")) %>% rename(state_abr = state, location = state_full, pop_size = total_pop)
   us_dat_raw <- readr::read_csv("https://raw.githubusercontent.com/CEIDatUGA/COVID-stochastic-fitting/master/output/us_current_results.csv")
@@ -94,30 +95,7 @@ get_data <- function()
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
-#Temporary fix to make transstrenght plot to work until next iteration of data is done with correction
-#  us_dat <- us_dat %>% mutate(median_value = ifelse(variable == "Transmissionstrength", mean_value, median_value))
 
-  #add actual data to a new column to add additional plotly layer. Actual data are only in "actual_" rows so need to case_when() then apply the values to all rows with same location + date
-  #(there is likely a tidy-er way to do this, revist once app is functional) 
-  # us_dat <- us_dat %>% mutate(Actual_Daily_Cases = case_when(variable == "actual_daily_cases" ~ median_value)) %>% 
-  #   mutate(Actual_Daily_Deaths = case_when(variable == "actual_daily_deaths" ~ median_value))
-  # 
-  #  #assuming NA values for actual_daily_x are zero and elimiates any values beyond the current date 
-  # us_dat$Actual_Daily_Cases[is.na(us_dat$Actual_Daily_Cases) & us_dat$date < Sys.Date()] <- 0
-  # us_dat$Actual_Daily_Deaths[is.na(us_dat$Actual_Daily_Deaths) & us_dat$date < Sys.Date()] <- 0
-  # 
-  # add_actual_case <- us_dat %>% group_by(date, location) %>%
-  #   summarize(actual_daily_cases = sum(Actual_Daily_Cases)) %>%
-  #   group_by(location) %>%
-  #   mutate(actual_cumulative_cases = cumsum(actual_daily_cases))
-  # 
-  # add_actual_death <- us_dat %>% group_by(date, location) %>%
-  #   summarize(actual_daily_deaths = sum(Actual_Daily_Deaths)) %>%
-  #   group_by(location) %>%
-  #   mutate(actual_cumulative_deaths = cumsum(actual_daily_deaths))
-  # 
-  # us_dat <- us_dat %>% left_join(add_actual_case, by = c("date", "location")) %>%
-  #   left_join(add_actual_death, by = c("date", "location"))
   
   #combine data in list  
   #currently only US, but set up for future use
@@ -217,7 +195,8 @@ server <- function(input, output, session)
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
-    colors <- c("#5798d1", "#a11c3e", "#319045")
+    #define a specified colorset for all scenarios
+    colorset = c('linear_increase_sd'='#5798d1','return_normal'='#a11c3e','status_quo'='#319045')
     
     # make plot
     if(outtype != "combined_trend")
@@ -230,14 +209,16 @@ server <- function(input, output, session)
       
       #make reactive legend names based on picker inputs
       legend_name <- build_legend(p_dat, scenario_var)
-      
+
       pl <- p_dat %>%
           plotly::plot_ly() %>% 
           plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                  mode = 'lines', 
                                  linetype = ~location, 
-                                 line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
-                                 color = ~scenario, colors = colors) %>%
+                                 line = list(width = linesize), 
+                                 name = ~legend_name, 
+                                 showlegend = FALSE, #not needed to run but indicating for reference
+                                 color = ~scenario, colors = colorset) %>%
                           layout(xaxis = list(title = "Date")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -249,7 +230,7 @@ server <- function(input, output, session)
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_80, ymax = ~upper_80, 
-                                 name = "80% Confidence Interval", 
+                                 name = "80% Prediction Interval", 
                                  color = ~scenario, showlegend = FALSE, opacity = 0.5) 
         maxy = max(p_dat$upper_80, na.rm = TRUE)
         
@@ -263,7 +244,8 @@ server <- function(input, output, session)
       
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
-                                     line = list(color = "grey"), opacity = 0.5, name = "Reported Data",
+                                     line = list(color = "grey"), opacity = 0.5, name = "Reported Data", 
+                                     showlegend = TRUE, legendgroup = ~location,
                                      marker = list(size = 5, color = "black", opacity = 0.5))
     } #end non-transmissions strength plots
     
@@ -276,14 +258,16 @@ server <- function(input, output, session)
       
       #make reactive legend names based on picker inputs
       legend_name <- build_legend(p_dat, scenario_var)
-      
+
       pl <- p_dat %>%
         plotly::plot_ly() %>% 
         plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
                           mode = 'lines', 
-                          linetype = ~scenario, 
-                          line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
-                          color = ~scenario, colors = colors) %>%
+                          linetype = ~location, 
+                          line = list(width = linesize), 
+                          name = ~legend_name,
+                          showlegend = TRUE, 
+                          color = ~scenario, colors = colorset) %>%
         layout(xaxis = list(title = "Date")) %>%
         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -334,63 +318,6 @@ server <- function(input, output, session)
   }) #end function making plots
   
   
-    
-  ###########################################
-  #function that makes case plot 
-  ###########################################
-  # output$case_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #   #create plot
-  #   pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                             input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "cases")
-  #   }
-  #   return(pl)
-  # }) #end function making case plot
-  # 
-  # ###########################################
-  # #function that makes all infected plot 
-  # ###########################################
-  # output$allinf_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                       input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "all_infections")
-  #   }
-  #   return(pl)
-  # }) #end function making all infected plot
-  # 
-  # ###########################################
-  # #function that makes death plot 
-  # ###########################################
-  # output$death_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, input$daily_tot,
-  #                       input$xscale, input$yscale, input$absolute_scaled, input$x_limit, input$conf_int, ylabel = 1, outtype = "deaths")
-  #   }
-  #   return(pl)
-  # }) #end function making death plot
-  # 
-  # ###########################################
-  # #function that makes transmission strength plot 
-  # ###########################################
-  # output$transstrength_plot <- renderPlotly({
-  #   pl <- NULL
-  #   if (!is.null(input$scenario_selector))
-  #   {
-  #     #create plot
-  #     pl <- make_plotly(us_dat, input$state_selector, input$scenario_selector, "Daily",
-  #                       input$xscale, input$yscale, "absolute", input$x_limit,  input$conf_int, ylabel = 1, outtype = "combined_trend")
-  #   }
-  #   return(pl)
-  # }) #end function making death plot
-
 } #end server function
 
 
@@ -406,7 +333,7 @@ ui <- fluidPage(
         uiOutput('state_selector'),
         uiOutput('scenario_selector'),
         br(),
-        shiny::checkboxInput("conf_int", label = h4("Show 80% confidence interval"), value = TRUE),
+        shiny::checkboxInput("conf_int", label = h4("Show 80% Prediction interval"), value = TRUE),
         #shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
         #shiny::div("Show 80% confidence interval for forecast data."),
         br(),
@@ -424,22 +351,22 @@ ui <- fluidPage(
         shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
         #shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
         shiny::div("Modify outcome plots to show data on a linear or logarithmic scale."),
-        br()
+        #br(),
+        #shiny::div("Current Date"),
+        #format(Sys.time(), '%B %d, %Y')
       ),         #end sidebar panel
       # Output:
       mainPanel(
         #change to plotOutput if using static ggplot object
-        #plotlyOutput(outputId = "transstrength_plot", height = "300px"),
-        #plotlyOutput(outputId = "case_plot", height = "300px"),
-        #plotlyOutput(outputId = "death_plot", height = "300px"),
-        plotlyOutput(outputId = "all_plots", height = "1000px")
-        #plotlyOutput(outputId = "allinf_plot", height = "300px")
+        plotlyOutput(outputId = "all_plots", height = "1000px"),
+        tags$div(paste0("Last model run: ",nowdate) ),
+        tags$div(
+          "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
+          "for more information and explanations."
+        )        
       ) #end main panel
-    ), #end sidebar layout     
-  tags$div(
-    "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
-    "for more information and explanations."
-  )
+    ) #end sidebar layout     
+
 ) #end fluidpage and UI part of shiny app
 #end UI of shiny app
 ###########################################

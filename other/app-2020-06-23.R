@@ -22,7 +22,7 @@ maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with 
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
-actualnames = c("actual_daily_cases", "actual_daily_deaths", "actual_cumulative_cases", "actual_cumulative_deaths")
+
 
 #################################
 # functions
@@ -34,7 +34,6 @@ capitalize_first <- function(str) {
   return(str)
 }
 
-#function to build tidy legend labels by scenario 
 build_legend <- function(p_dat, scenario_var){
   #make reactive legend names based on picker inputs
   make_legend <- match(p_dat$scenario, scenario_var)
@@ -218,8 +217,7 @@ server <- function(input, output, session)
  
     linesize = 1.5
     ncols = max(3,length(unique(plot_dat$location))) #number of colors for plotting
-    #define a specified colorset for all scenarios
-    colorset = c('linear_increase_sd'='#5798d1','return_normal'='#a11c3e','status_quo'='#319045')
+    colors <- c("#5798d1", "#a11c3e", "#319045")
     
     # make plot
     if(outtype != "combined_trend")
@@ -232,16 +230,14 @@ server <- function(input, output, session)
       
       #make reactive legend names based on picker inputs
       legend_name <- build_legend(p_dat, scenario_var)
-
+      
       pl <- p_dat %>%
           plotly::plot_ly() %>% 
           plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                  mode = 'lines', 
                                  linetype = ~location, 
-                                 line = list(width = linesize), 
-                                 name = ~legend_name, 
-                                 showlegend = FALSE, #not needed to run but indicating for reference
-                                 color = ~scenario, colors = colorset) %>%
+                                 line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
+                                 color = ~scenario, colors = colors) %>%
                           layout(xaxis = list(title = "Date")) %>%
                           layout(yaxis = list(title=ylabel, type = yscale, size = 18)) %>%
                           layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -253,7 +249,7 @@ server <- function(input, output, session)
       {
         #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_80, ymax = ~upper_80, 
-                                 name = "80% Prediction Interval", 
+                                 name = "80% Confidence Interval", 
                                  color = ~scenario, showlegend = FALSE, opacity = 0.5) 
         maxy = max(p_dat$upper_80, na.rm = TRUE)
         
@@ -267,8 +263,7 @@ server <- function(input, output, session)
       
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
-                                     line = list(color = "grey"), opacity = 0.5, name = "Reported Data", 
-                                     showlegend = TRUE, legendgroup = ~location,
+                                     line = list(color = "grey"), opacity = 0.5, name = "Reported Data",
                                      marker = list(size = 5, color = "black", opacity = 0.5))
     } #end non-transmissions strength plots
     
@@ -281,16 +276,14 @@ server <- function(input, output, session)
       
       #make reactive legend names based on picker inputs
       legend_name <- build_legend(p_dat, scenario_var)
-
+      
       pl <- p_dat %>%
         plotly::plot_ly() %>% 
         plotly::add_trace(x = ~date, y = ~mean_value, type = 'scatter', 
                           mode = 'lines', 
-                          linetype = ~location, 
-                          line = list(width = linesize), 
-                          name = ~legend_name,
-                          showlegend = TRUE, 
-                          color = ~scenario, colors = colorset) %>%
+                          linetype = ~scenario, 
+                          line = list(width = linesize), name = ~legend_name, #text = tooltip_text, 
+                          color = ~scenario, colors = colors) %>%
         layout(xaxis = list(title = "Date")) %>%
         layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
@@ -413,7 +406,7 @@ ui <- fluidPage(
         uiOutput('state_selector'),
         uiOutput('scenario_selector'),
         br(),
-        shiny::checkboxInput("conf_int", label = h4("Show 80% Prediction interval"), value = TRUE),
+        shiny::checkboxInput("conf_int", label = h4("Show 80% confidence interval"), value = TRUE),
         #shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
         #shiny::div("Show 80% confidence interval for forecast data."),
         br(),
@@ -431,9 +424,7 @@ ui <- fluidPage(
         shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
         #shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
         shiny::div("Modify outcome plots to show data on a linear or logarithmic scale."),
-        br(),
-        shiny::div("Current Date"),
-        format(Sys.time(), '%B %d, %Y')
+        br()
       ),         #end sidebar panel
       # Output:
       mainPanel(
