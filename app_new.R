@@ -19,6 +19,7 @@ library(httr) #for reading from github
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
 maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data: maybe something like Sys.Date() + x number of days from the model data?
+modeldate = as.Date("2020-06-21", "%Y-%m-%d")
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
@@ -268,7 +269,7 @@ server <- function(input, output, session)
                           showlegend = FALSE, 
                           color = ~scenario, colors = colorset) %>%
         layout(xaxis = list(title = "Date")) %>%
-        layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
+        layout(yaxis = list(title="Relative Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
       maxy = max(p_dat$mean_value, na.rm = TRUE)
@@ -359,7 +360,7 @@ ui <- fluidPage(
         #change to plotOutput if using static ggplot object
         plotlyOutput(outputId = "all_plots", height = "1000px"),
         img(src='legend.png', align = "bottom", height = "100px", width = "250px"),
-        tags$div(paste0("Last model run: ",nowdate) ),
+        tags$div(paste0("Last model run: ",modeldate) ),
         tags$div(
           "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
           "for more information and explanations."
