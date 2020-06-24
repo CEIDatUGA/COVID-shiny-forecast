@@ -18,7 +18,7 @@ library(httr) #for reading from github
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-modeldate = as.Date("2020-06-21", "%Y-%m-%d")#need to automate this pull 
+modeldate = as.Date("2020-06-21", "%Y-%m-%d")#need to automate this pull cannot use "nowdate" because it is defined in the server
 maxdate = as.Date(modeldate,"%Y-%m-%d") + 42 #this works but is dependant on modeldate working and assumes the data always uses 42 days
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
@@ -103,7 +103,7 @@ get_data <- function()
   
   #save the data
   saveRDS(all_data, filename)    
-  return(all_data, maxdate)
+  return(all_data)
 } # end the get-data function which pulls data from the various online scenarios and processes/saves  
 
 
@@ -222,10 +222,10 @@ server <- function(input, output, session)
       
       maxy = max(p_dat$median_value, na.rm = TRUE)
       
-      #Adds confidence interval ribbons and/or current date bar
+      #Adds prediction interval ribbons and/or current date bar
       if(conf_int == TRUE)
       {
-        #add confidence interval ranges
+        #add prediction interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_80, ymax = ~upper_80, 
                                  name = "80% Prediction Interval", 
                                  color = ~scenario, showlegend = FALSE, opacity = 0.5) 
