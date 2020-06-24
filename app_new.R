@@ -18,12 +18,11 @@ library(httr) #for reading from github
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data: maybe something like Sys.Date() + x number of days from the model data?
-modeldate = as.Date("2020-06-21", "%Y-%m-%d")
+modeldate = as.Date("2020-06-21", "%Y-%m-%d")#need to automate this pull 
+maxdate = as.Date(modeldate,"%Y-%m-%d") + 42 #this works but is dependant on modeldate working and assumes the data always uses 42 days
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
-actualnames = c("actual_daily_cases", "actual_daily_deaths", "actual_cumulative_cases", "actual_cumulative_deaths")
 
 #################################
 # functions
@@ -96,8 +95,6 @@ get_data <- function()
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
-
-  
   #combine data in list  
   #currently only US, but set up for future use
   all_data$us_dat = us_dat
@@ -106,7 +103,7 @@ get_data <- function()
   
   #save the data
   saveRDS(all_data, filename)    
-  return(all_data)
+  return(all_data, maxdate)
 } # end the get-data function which pulls data from the various online scenarios and processes/saves  
 
 
