@@ -18,11 +18,11 @@ library(httr) #for reading from github
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-modeldate = readRDS("./data/old_nowdate.rds") #modeldate workaround that pulls the previously generated nowdate (saved as an rds) to build the ui slider input upon next opening of the app.
-maxdate = as.Date(modeldate,"%Y-%m-%d") + 42 #this works but is dependant on modeldate working and assumes the data always uses a 42 day prediction
+maxdate = as.Date("2020-08-01","%Y-%m-%d") #need a way to make this update with all new data: maybe something like Sys.Date() + x number of days from the model data?
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
+actualnames = c("actual_daily_cases", "actual_daily_deaths", "actual_cumulative_cases", "actual_cumulative_deaths")
 
 #################################
 # functions
@@ -95,6 +95,8 @@ get_data <- function()
             left_join(us_popsize, by = "location") %>%
             rename(populationsize = pop_size, scenario = sim_type)
   
+
+  
   #combine data in list  
   #currently only US, but set up for future use
   all_data$us_dat = us_dat
@@ -105,6 +107,7 @@ get_data <- function()
   saveRDS(all_data, filename)    
   return(all_data)
 } # end the get-data function which pulls data from the various online scenarios and processes/saves  
+
 
 
 ###########################################
@@ -137,12 +140,6 @@ server <- function(input, output, session)
   #assigned to a global variable
   x <- us_dat %>% filter(location == "Alabama", variable == "actual_daily_cases")
   nowdate <<- x$date[max(which(x$period == "Past"))]
-  
-  #pull in old nowdate value and compare to new nowdate, replace if older
-  old_nowdate <- readRDS("./data/old_nowdate.rds")
-  if(nowdate > old_nowdate){
-    saveRDS(nowdate, file = "./data/old_nowdate.rds") #updates ui slider input each time a new nowdate is created
-  }
   
   ################################################################################################
   #create the following UI elements on server and then add to UI since they depend on the variables above 
@@ -228,10 +225,10 @@ server <- function(input, output, session)
       
       maxy = max(p_dat$median_value, na.rm = TRUE)
       
-      #Adds prediction interval ribbons and/or current date bar
-      if(conf_int == "Yes")
+      #Adds confidence interval ribbons and/or current date bar
+      if(conf_int == TRUE)
       {
-        #add prediction interval ranges
+        #add confidence interval ranges
         pl <- pl %>% add_ribbons(x = ~date, ymin = ~lower_80, ymax = ~upper_80, 
                                  name = "80% Prediction Interval", 
                                  color = ~scenario, showlegend = FALSE, opacity = 0.5) 
@@ -248,7 +245,7 @@ server <- function(input, output, session)
       pl <- pl %>% plotly::add_trace(x = ~date, y = ~median_value, type = 'scatter',
                                      mode = 'lines+markers',  data = actual_data,
                                      line = list(color = "grey"), opacity = 0.5, name = "Reported Data", 
-                                     showlegend = FALSE,
+                                     showlegend = TRUE, legendgroup = ~location,
                                      marker = list(size = 5, color = "black", opacity = 0.5))
     } #end non-transmissions strength plots
     
@@ -269,10 +266,10 @@ server <- function(input, output, session)
                           linetype = ~location, 
                           line = list(width = linesize), 
                           name = ~legend_name,
-                          showlegend = FALSE, 
+                          showlegend = TRUE, 
                           color = ~scenario, colors = colorset) %>%
         layout(xaxis = list(title = "Date")) %>%
-        layout(yaxis = list(title="Relative Transmission Strength", type = yscale, size = 18)) %>%
+        layout(yaxis = list(title="Transmission Strength", type = yscale, size = 18)) %>%
         layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
       
       maxy = max(p_dat$mean_value, na.rm = TRUE)
@@ -335,10 +332,11 @@ ui <- fluidPage(
       sidebarPanel(
         uiOutput('state_selector'),
         uiOutput('scenario_selector'),
-        #br(),
-        #shiny::checkboxInput("conf_int", label = h4("Show 80% Prediction interval"), value = TRUE),
-        shiny::radioButtons("conf_int", label = h4("Show 80% Prediction interval"), choices = list("Yes" = "Yes", "No" = "No"), selected = "Yes"),
+        br(),
+        shiny::checkboxInput("conf_int", label = h4("Show 80% Prediction interval"), value = TRUE),
+        #shiny::selectInput("conf_int", "Show forecast confidence interval", c("Yes" = "Yes", "No" = "No" ), selected = "Yes"),
         #shiny::div("Show 80% confidence interval for forecast data."),
+        br(),
         shiny::radioButtons("daily_tot", label = h4("Daily or cumulative numbers"), choices = list("Daily" = "daily", "Cumulative" = "cumulative"), selected = "daily"),
        #shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
         shiny::div("Modify all plots to show daily or cumulative data."),
@@ -348,19 +346,20 @@ ui <- fluidPage(
         shiny::div("Modify the bottom three plots to display values scaled by the state population size."),
         br(),
         sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate)),
-        shiny::div("Modify plots to display a specified date range."),
+        shiny::div("Modify plots to begin at a specified starting date designated in the slider above."),
         br(),
         shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
         #shiny::selectInput(  "yscale", "Y-scale", c("Linear" = "lin", "Logarithmic" = "log")),
         shiny::div("Modify outcome plots to show data on a linear or logarithmic scale."),
-       
+        #br(),
+        #shiny::div("Current Date"),
+        #format(Sys.time(), '%B %d, %Y')
       ),         #end sidebar panel
       # Output:
       mainPanel(
         #change to plotOutput if using static ggplot object
         plotlyOutput(outputId = "all_plots", height = "1000px"),
-        img(src='legend.png', align = "bottom", height = "100px", width = "250px"),
-        tags$div(paste0("Last model run: ",modeldate) ),
+        tags$div(paste0("Last model run: ",nowdate) ),
         tags$div(
           "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
           "for more information and explanations."
