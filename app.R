@@ -18,8 +18,6 @@ library(httr) #for reading from github
 
 #starting date for date slider and default starting date to show
 mindate = as.Date("2020-02-01","%Y-%m-%d")
-modeldate = readRDS("./data/old_nowdate.rds") #modeldate workaround that pulls the previously generated nowdate (saved as an rds) to build the ui slider input upon next opening of the app.
-maxdate = as.Date(modeldate,"%Y-%m-%d") + 42 #this works but is dependant on modeldate working and assumes the data always uses a 42 day prediction
 defaultdate = as.Date("2020-03-01","%Y-%m-%d")
 #needs to follow order of scenarios
 scenarionames = c("Increase social distancing", "Return to normal", "Maintain social distancing")
@@ -142,13 +140,9 @@ server <- function(input, output, session)
   #done a bit clunky, could likely be done better (and tidy)
   #assigned to a global variable
   x <- us_dat %>% filter(location == "Alabama", variable == "actual_daily_cases")
-  nowdate <<- x$date[max(which(x$period == "Past"))]
+  rundate <<- x$date[max(which(x$period == "Past"))]
+  maxdate <<- as.Date(rundate,"%Y-%m-%d") + 42 #this works but is dependant on modeldate working and assumes the data always uses a 42 day prediction
   
-  #pull in old nowdate value and compare to new nowdate, replace if older
-  old_nowdate <- readRDS("./data/old_nowdate.rds")
-  if(nowdate > old_nowdate){
-    saveRDS(nowdate, file = "./data/old_nowdate.rds") #updates ui slider input each time a new nowdate is created
-  }
   
   ################################################################################################
   #create the following UI elements on server and then add to UI since they depend on the variables above 
@@ -159,9 +153,12 @@ server <- function(input, output, session)
   })
   output$scenario_selector = renderUI({
     checkboxGroupInput("scenario_selector", label = h4("Select Scenario(s)"), choices = scenario_var, selected = c("status_quo","return_normal","linear_increase_sd") )
-  #shinyWidgets::pickerInput("scenario_selector", "Select Scenario(s)", choices = scenario_var, multiple = TRUE, options = list(`actions-box` = TRUE), selected = scenario_var[3] )
   })
-
+  output$x_limit = renderUI({
+    sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate))
+  })
+  
+  
   
 
   ###########################################
@@ -262,6 +259,7 @@ server <- function(input, output, session)
     {
       p_dat <- plot_dat %>% 
         filter(variable == outcome) %>%
+        filter(scenario %in% scenario_selector) %>%
         group_by(scenario,location) %>%
         arrange(date)
       
@@ -290,7 +288,7 @@ server <- function(input, output, session)
                                       y = 0, yend = maxy, name = nowdate,
                                       color = I("black"), alpha = 0.75,
                                       showlegend = FALSE)  %>%
-            layout(annotations = list(x = nowdate, y = maxy, text = nowdate,
+            layout(annotations = list(x = nowdate, y = maxy, text = paste0("Last model run: ", rundate),
                                       xref = "x", yref = "y",
                                       showarrow = TRUE, arrowhead = 3,
                                       ax = 20, ay = -40))
@@ -353,7 +351,7 @@ ui <- fluidPage(
         #shiny::selectInput( "absolute_scaled","Absolute or scaled values",c("Absolute Number" = "absolute", "Per 100,000 persons" = "scaled") ),
         shiny::div("Modify the bottom three plots to display values scaled by the state population size."),
         br(),
-        sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate)),
+        uiOutput('x_limit'),
         shiny::div("Modify plots to display a specified date range."),
         br(),
         shiny::radioButtons("yscale", label = h4("Y-scale"), choices = list("Linear" = "lin", "Logarithmic" = "log"), selected = "lin"),
@@ -366,8 +364,7 @@ ui <- fluidPage(
         #change to plotOutput if using static ggplot object
         plotlyOutput(outputId = "all_plots", height = "1000px"),
         img(src='legend.png', align = "bottom", height = "100px", width = "250px"),
-        tags$div(paste0("Last model run: ",modeldate) ),
-        tags$div(
+         tags$div(
           "These interactive plots are part of CEID @ UGA's work on COVID-19 modeling. If you ended up on this site outside our main page, see", a("the link to this website", href = "https://www.covid19.uga.edu", target = "_blank" ),
           "for more information and explanations."
         )        

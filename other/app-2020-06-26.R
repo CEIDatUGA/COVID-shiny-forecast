@@ -262,7 +262,6 @@ server <- function(input, output, session)
     {
       p_dat <- plot_dat %>% 
         filter(variable == outcome) %>%
-        filter(scenario %in% scenario_selector) %>%
         group_by(scenario,location) %>%
         arrange(date)
       
