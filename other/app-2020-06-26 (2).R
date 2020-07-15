@@ -152,7 +152,7 @@ server <- function(input, output, session)
     shinyWidgets::pickerInput("state_selector", "Select State(s)", state_var, multiple = FALSE, options = list(`actions-box` = TRUE), selected = c("Georgia") )
   })
   output$scenario_selector = renderUI({
-    checkboxGroupInput("scenario_selector", label = h4("Select scenario(s)"), choices = scenario_var, selected = c("status_quo","return_normal","linear_increase_sd") )
+    checkboxGroupInput("scenario_selector", label = h4("Select Scenario(s)"), choices = scenario_var, selected = c("status_quo","return_normal","linear_increase_sd") )
   })
   output$x_limit = renderUI({
     sliderInput(inputId = "x_limit", "Select a range of dates to be plotted.", min = mindate,  max = maxdate, value = c(defaultdate, maxdate))
@@ -284,11 +284,11 @@ server <- function(input, output, session)
     }
 
     #add date marker
-    pl <- pl %>% plotly::add_segments(x = rundate, xend = rundate, 
-                                      y = 0, yend = maxy, name = rundate,
+    pl <- pl %>% plotly::add_segments(x = nowdate, xend = nowdate, 
+                                      y = 0, yend = maxy, name = nowdate,
                                       color = I("black"), alpha = 0.75,
                                       showlegend = FALSE)  %>%
-            layout(annotations = list(x = rundate, y = maxy, text = paste0("Last model run: ", rundate),
+            layout(annotations = list(x = nowdate, y = maxy, text = paste0("Last model run: ", rundate),
                                       xref = "x", yref = "y",
                                       showarrow = TRUE, arrowhead = 3,
                                       ax = 20, ay = -40))
@@ -341,7 +341,7 @@ ui <- fluidPage(
         uiOutput('scenario_selector'),
         #br(),
         #shiny::checkboxInput("conf_int", label = h4("Show 80% Prediction interval"), value = TRUE),
-        shiny::radioButtons("conf_int", label = h4("Show 80% prediction interval"), choices = list("Yes" = "Yes", "No" = "No"), selected = "Yes"),
+        shiny::radioButtons("conf_int", label = h4("Show 80% Prediction interval"), choices = list("Yes" = "Yes", "No" = "No"), selected = "Yes"),
         #shiny::div("Show 80% confidence interval for forecast data."),
         shiny::radioButtons("daily_tot", label = h4("Daily or cumulative numbers"), choices = list("Daily" = "daily", "Cumulative" = "cumulative"), selected = "daily"),
        #shiny::selectInput("daily_tot", "Daily or cumulative numbers", c("Daily" = "daily", "Cumulative" = "cumulative" )),
