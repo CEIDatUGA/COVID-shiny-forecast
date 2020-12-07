@@ -43,6 +43,19 @@ build_legend <- function(p_dat, scenario_var){
   return(make_legend)
 }
 
+#make vertical line function for plotlys with reactive y-values
+vline <- function(x = 0, color = "black") {
+  list(
+    type = "line", 
+    y0 = 0, 
+    y1 = 1, 
+    yref = "paper",
+    x0 = x, 
+    x1 = x, 
+    line = list(color = color)
+  )
+}
+
 #################################
 # Load all data
 # should be online so things update automatically
@@ -284,14 +297,22 @@ server <- function(input, output, session)
     }
 
     #add date marker
-    pl <- pl %>% plotly::add_segments(x = rundate, xend = rundate, 
-                                      y = 0, yend = maxy, name = rundate,
-                                      color = I("black"), alpha = 0.75,
-                                      showlegend = FALSE)  %>%
-            layout(annotations = list(x = rundate, y = maxy, text = paste0("Last model run: ", rundate),
-                                      xref = "x", yref = "y",
-                                      showarrow = TRUE, arrowhead = 3,
-                                      ax = 20, ay = -40))
+    if(yscale == "lin"){
+      pl <- pl %>%
+        layout(annotations = list(x = rundate, y = maxy, text = paste0("Last model run: ", rundate),
+                                  xref = "x", yref = "y",
+                                  showarrow = TRUE, arrowhead = 3,
+                                  ax = 20, ay = -40)) %>%
+        layout(shapes = list(vline(rundate))) 
+    } else 
+    {
+      pl <- pl %>%
+        layout(annotations = list(x = rundate, y = log10(maxy), text = paste0("Last model run: ", rundate),
+                                  xref = "x", yref = "y",
+                                  showarrow = TRUE, arrowhead = 3,
+                                  ax = 20, ay = -40)) %>%
+        layout(shapes = list(vline(rundate))) 
+    }
     
     
     return(pl)
