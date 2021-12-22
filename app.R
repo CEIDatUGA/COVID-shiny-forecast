@@ -65,14 +65,16 @@ vline <- function(x = 0, color = "black") {
 # to ensure data gets refreshed on server, we need this
 get_data <- function()
 {
-  filename = here("data",paste0("clean_data_",Sys.Date(),'.rds')) #if the data file for today is here, load then return from function
+  #filename = here("data",paste0("clean_data_",Sys.Date(),'.rds')) #if the data file for today is here, load then return from function
+  filename = here("data","clean_data_2021-12-22.rds") #this loads a static data file, no more refreshing with daily/new data
   if (file.exists(filename)) 
   {
      all_data <- readRDS(file = filename)    
      return(all_data)  
   }
-  #if data file is not here, go through all of the below
   
+  #if data file is not here, go through all of the steps below 
+  #this will pull raw data and process it
   all_data = list() #will save and return all datasets as list
   
   #################################
